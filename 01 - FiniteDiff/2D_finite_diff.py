@@ -1,68 +1,124 @@
-import matplotlib.pyplot as plt
-import math
+# Solving the 2D heat equation 
+# du/dt - alpha * (d^2u/dx^2 + d^2u/dy^2) = 0, 0 < x < 1, 0 < y < 1
+# u(x, y, 0) = u0(x, y)
+# u0(0, y) = u0(1, y) = u0(x, 0) = 0
+# u0(x, 1) = 0
+
 import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+from matplotlib.animation import FuncAnimation
 
-# Solve -u'' = f(x) on (l1,l2) x (l3,l4) and u = K on the boundary
-# using finite differences
-def FiniteDiff(f, n1, n2, l1 = 0, l2 = 1, l3 = 0, l4 = 1, K = 0):
+# Finite difference method
+# u[t+1][dx][dy] = dt * alpha * ((u[t][dx+1][dy] - 2 * u[t][dx][dy] + u[t][dx-1][dy]) / dx² ) + 
+#                                (u[t][dx][dy+1] - 2 * u[t][dx][dy] + u[t][dx][dy-1]) / dy² )) + u[t][dx][dy]
+# alphat = alpha * dt
+# alphatx = alphat / dx²
+# alphaty = alphat / dy²
+# u[t+1][dx][dy] = alphatx * (u[t][dx+1][dy] - 2 * u[t][dx][dy] + u[t][dx-1][dy]) +
+#                  alphaty * (u[t][dx][dy+1] - 2 * u[t][dx][dy] + u[t][dx][dy-1]) + u[t][dx][dy]
+# u[t+1] = alphatx * (np.roll(u[t], -1, axis=1) - 2 * u[t] + np.roll(u[t], 1, axis=1)) +
+#          alphaty * (np.roll(u[t], -1, axis=0) - 2 * u[t] + np.roll(u[t], 1, axis=0)) + u[t]
 
-    h1 = (l2 - l1) / (n1 + 1)
-    h2 = (l4 - l3) / (n2 + 1)
-    ratio = (h1 / h2) ** 2
-    x1 = np.linspace(l1 + h1, l2 - h1, n1)
-    x2 = np.linspace(l3 + h2, l4 - h2, n2)
-    F = np.array([[f(x1[i],x2[j]) + (K if (i == 0 or j == 0 or i == n1-1 or j == n2-1) else 0) for j in range(n2)] for i in range(n1)]).flatten()
-    F *= h1**2
+def solve_2d_mt_get_next(alphat, alphatx, alphaty, u0):
+    return (alphatx * (np.roll(u0, -1, axis=1) + np.roll(u0, 1, axis=1)) + 
+            alphaty * (np.roll(u0, -1, axis=0) + np.roll(u0, 1, axis=0)) + u0 * (1 - 2 * alphatx - 2 * alphaty)) 
 
-    print("\n############### F ###############\n\n",F,"\n\n#################################\n")
+def reset_boundary_conditions(u):
+    u_top = 100
+    u_left = -2
+    u_bottom = -2
+    u_right = -2
+    nx = len(u)
+    ny = len(u[0])
+    u[(nx-1):, :] = u_top
+    u[:, :1] = u_left
+    u[:1, 1:] = u_bottom
+    u[:, (ny-1):] = u_right
+    return u
 
-    # u[i][j] * 2 * (1 + ratio) * h2**2 = f(x1[i], x2[j]) * h1**2 * h2**2 + u[i-1][j] * h2**2 + u[i+1][j] * h2**2 + u[i][j-1] * h1**2 + u[i][j+1] * h1**2
-    # u[i][j] = (f(x1[i], x2[j]) * h1**2 + u[i-1][j] + u[i+1][j] + u[i][j-1] * ratio + u[i][j+1] * ratio) / (2 * (1 + ratio) )
-    # let k = i * n2 + j
-    # u[k] = (f[k] * h1**2 + u[k-n2] + u[k+n2] + u[k-1] * ratio + u[k+1] * ratio) / (2 * (1 + ratio) )
-    # u[k] = (F + u[k-n2] + u[k+n2] + u[k-1] * ratio + u[k+1] * ratio) / (2 * (1 + ratio) )
-    # F = u[k] * (2 * (1 + ratio)) - u[k-n2] - u[k+n2] - u[k-1] * ratio - u[k+1] * ratio
+def solve_2d_mt(nt, dt, dx, dy, alpha, u):
+    alphat = alpha * dt
+    alphatx = alphat / dx**2
+    alphaty = alphat / dy**2
+
+    for k in range(0, nt - 1, 1):
+        u[k+1] = solve_2d_mt_get_next(alphat, alphatx, alphaty, u[k])
+        # Reset the boundary conditions
+        #u[k+1] = reset_boundary_conditions(u[k+1])
+    return u
+
+
+def solve_2d_fl(nt, dt,  x, y, alpha, u):
+    alphat = alpha * dt
+    for k in range(0, nt - 1, 1):
+        for i in range(1, len(x) - 1):  
+            alphatx = alphat / x[i]**2
+            for j in range(1, len(y) - 1):
+                print("Solving for u[", k, "][", i, "][", j, "]")
+                alphaty = alphat / y[j]**2
+                u[k+1][i][j] = u[k][i][j] + (alphatx * (u[k][i+1][j] - 2 * u[k][i][j] + u[k][i-1][j]) +
+                                             alphaty * (u[k][i][j+1] - 2 * u[k][i][j] + u[k][i][j-1]) )
+                
+    return u   
+
+def plotheatmap(u_k, k, dt):
+    # Clear the current plot figure
+    plt.clf()
+    plt.title(f"Temperature at t = {k*dt:.3f} unit time")
+    plt.xlabel("x")
+    plt.ylabel("y")
     
-    A = np.diag(v = 2 * (1 + ratio) * np.ones(n1 * n2), k = 0)
-    A += np.diag(v = -np.ones(n1 * n2 - n2), k = n2) 
-    A += np.diag(v = -np.ones(n1 * n2 - n2), k = -n2) 
-    A += np.diag(v = -ratio * np.ones(n1 * n2 - 1), k = 1) 
-    A += np.diag(v = -ratio * np.ones(n1 * n2 - 1), k = -1)       # u[k+1]
+    # This is to plot u_k (u at time-step k)
+    plt.pcolormesh(u_k, cmap = plt.cm.jet)
+    plt.colorbar()
+    
+    return plt
 
-    print("\n############### A ###############\n\n",A,"\n\n#################################\n")
+def animate(k, u, dt):
+        plotheatmap(u[k], k, dt)
 
-    u = np.linalg.solve(A, F)
-    #print(x1)
-    #print(x2)
-    #print(u)
-    u = np.array([[K if (i == 0 or j == 0 or i == n1+1 or j == n2+1) else u[(i-1) * n2 + j-1] for j in range(n2 + 2)] for i in range(n1 + 2)])
-    x1 = np.append(l1, x1)
-    x1 = np.append(x1, l2)
-    x2 = np.append(l3, x2)
-    x2 = np.append(x2, l4)
-
-    return x1, x2, u
 
 def main():
-    f = lambda x1, x2: x2 + x1
-    x1, x2, U = FiniteDiff(f, 3, 3, K = 0)
-    X1, X2 = np.meshgrid(x1, x2)
+    # Grid parameters
+    nx = 200
+    ny = 200
+    nt = 100
+    lx = 1000
+    ly = 1000
+    x = np.linspace(0, lx, nx + 1)
+    y = np.linspace(0, ly, ny + 1)
 
-    print("\n############### x1 ###############\n\n",x1,"\n\n#################################\n")
-    print("\n############### x2 ###############\n\n",x2,"\n\n#################################\n")
-    print("\n############### U ###############\n\n",U,"\n\n#################################\n")
-    print("Done!")
+    dx = x[1] - x[0]
+    dy = y[1] - y[0]
     
-    fig = plt.figure()
-    ax = plt.axes(projection='3d')
-    ax.contour3D(X1, X2, U, 50, cmap='binary')
-    ax.set_title('surface')
-    ax.set_xlabel('x')
-    ax.set_ylabel('y')
-    ax.set_zlabel('z')
-    plt.show()
 
+    # Equation parameters   
+    alpha = 1.0
 
+    # Initial conditions
+    u = np.empty((nt, nx, ny))
+    u0 = np.zeros((nx, ny))
+    #u0[nx//4:3*nx//4, ny//4:3*ny//4] = np.random.rand(250,250) * 500
+    u0 = np.load("../Random/image_array.npy")
+    # Rotate 180 degrees
+    u0 = np.rot90(u0, 2)
+    u[0] = u0
+    #u[0] = reset_boundary_conditions(u[0])
+    u1 = u
+    u2 = u
 
-if __name__ == '__main__':
+    # Time parameters
+    dt = (dx * dy)/ (4 * alpha)
+    print("Parameters: nx = ", nx, ", ny = ", ny, ", nt = ", nt, ", lx = ", lx, ", ly = ", ly, ", dx = ", dx, ", dy = ", dy, ", alpha = ", alpha, ", dt = ", dt)
+    # Solve the equation
+    u1 = solve_2d_mt(nt, dt, dx, dy, alpha, u1)
+
+    print("Done!")
+    # Plot the solution
+    anim = animation.FuncAnimation(plt.figure(), animate, fargs=[u1, dt], interval=1, frames=nt, repeat=False)
+    anim.save('heat.mp4', fps=dt, extra_args=['-vcodec', 'libx264'])
+    
+
+if __name__ == "__main__":
     main()
