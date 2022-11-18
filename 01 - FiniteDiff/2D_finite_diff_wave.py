@@ -28,7 +28,7 @@ def solve_2d_mt_get_next(ctx, cty, u0, u00):
             cty * (np.roll(u0, -1, axis=1) + np.roll(u0, 1, axis=1)))
 
 def reset_boundary_conditions(u):
-    u_top = 0
+    u_top = 1
     u_left = 0
     u_bottom = 0
     u_right = 0
@@ -90,7 +90,7 @@ def main():
     # Initial conditions
     u = np.empty((nt, nx, ny))
     u0 = np.load("../Random/image_array.npy")
-
+    u0 = np.zeros((nx, ny))
     # Rotate 180 degrees
     u0 = np.rot90(u0, 2)
     u[0] = u0
@@ -107,8 +107,8 @@ def main():
     print("Done!")
     # Plot the solution
     anim = animation.FuncAnimation(plt.figure(), animate, fargs=[u, dt], interval=1, frames=nt, repeat=False)
-    #plt.show()
-    anim.save('heat.mp4', fps=24, extra_args=['-vcodec', 'libx264'])
+    plt.show()
+    #anim.save('heat.mp4', fps=24, extra_args=['-vcodec', 'libx264'])
 
 if __name__ == "__main__":
     main()
