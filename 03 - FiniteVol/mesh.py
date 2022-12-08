@@ -1,6 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D 
+from scipy.sparse import csr_matrix
 
 class Node:
    def __init__(self, type_node, internal, index, i = 0, j = 0, k = 0, x = 0, y = 0, z = 0):
@@ -63,6 +63,8 @@ class Mesh:
         self.dx, self.dy, self.dz = 0, 0, 0
         self.nhfaces, self.nlfaces, self.nwfaces = 0, 0, 0
         self.nvols, self.nfaces = 0, 0
+        self.volumes_trans = None
+        self.faces_trans = None
     
     def assemble_mesh(self, axis_attibutes):
         """
@@ -93,11 +95,13 @@ class Mesh:
         
         self.nvols = self._get_num_volumes()
         self.volumes = np.empty((self.nvols), dtype=Node)
+        self.volumes_trans = np.empty((self.nvols), dtype=float)
         self.volumes_adjacents = np.empty((self.nvols, 0), dtype = Node)
 
         self.nfaces = self._get_num_faces()
         self.faces = np.empty((self.nfaces), dtype=Node)
-        self.faces_adjacents = np.empty((self.nfaces, 0))
+        self.faces_trans = np.empty((self.nfaces), dtype=float)
+        self.faces_adjacents = np.empty((self.nfaces, 2), dtype = int)
 
         self._assemble_volumes()
         self._assemble_faces()
@@ -105,24 +109,45 @@ class Mesh:
 
     
 
-    def assemble_face_transmissibilities(self, K):
+    def assemble_faces_transmissibilities(self, K):
         """
         Monta as transmissibilidades das faces da malha
         """
-        #TODO
+        self.volumes_trans = np.flip(K, 0).flatten()
+
+        Kh = 2 / (1/K[:, :, 1:] + 1/K[:, :, :-1])
+        Kh = np.insert(Kh,  0, K[:, :, 0], axis = 2)
+        Kh = np.insert(Kh, self.nx, K[:, :, -1], axis = 2)
+
+        Kl = 2 / (1/K[:, 1:, :] + 1/K[:, :-1, :])
+        Kl = np.insert(Kl,  0, K[:, 0, :], axis = 1)
+        Kl = np.insert(Kl, self.ny, K[:, -1, :], axis = 1)
+
+        Kw = 2 / (1/K[1:, :, :] + 1/K[:-1, :, :])
+        Kw = np.insert(Kw,  0, K[0, :, :], axis = 0)
+        Kw = np.insert(Kw, self.nz, K[-1, :, :], axis = 0)
+
+
+        faces_trans_h = np.flip(Kh, 0).flatten()
+        faces_trans_l = np.flip(Kl, 0).flatten()
+        faces_trans_w = np.flip(Kw, 0).flatten()
+
+        self.faces_trans = np.hstack((-faces_trans_h, -faces_trans_l, -faces_trans_w))
+        
+
     
-    def plot(self, show_coordinates = False, show_volumes = False, show_faces = False, show_adjacents = False):
+    def plot(self, show_coordinates = False, show_volumes = False, show_faces = False, show_adjacents = False, show_transmissibilities = False):
         """
         Plota a malha (1D, 2D ou 3D)
         """
         if self.dimension == 1 or self.dimension == 2:
-            self._plot_2d(show_coordinates, show_volumes, show_faces, show_adjacents)
+            self._plot_2d(show_coordinates, show_volumes, show_faces, show_adjacents, show_transmissibilities)
         elif self.dimension == 3:
-            self._plot_3d(show_coordinates, show_volumes, show_faces, show_adjacents)
+            self._plot_3d(show_coordinates, show_volumes, show_faces, show_adjacents, show_transmissibilities)
         else:
             raise Exception("Número de eixos inválido")
     
-    def _plot_2d(self, show_coordinates, show_volumes, show_faces, show_adjacents):
+    def _plot_2d(self, show_coordinates, show_volumes, show_faces, show_adjacents, show_transmissibilities):
         """
         Plota a malha 2D com o índice de cada nó
         """
@@ -135,6 +160,8 @@ class Mesh:
                 if show_coordinates:
                     ax.annotate("i: " + str(volume.i), (volume.x, volume.y + off))
                     ax.annotate("j: " + str(volume.j), (volume.x, volume.y + off/2))
+                if show_transmissibilities:
+                    ax.annotate("T: " + str(np.around(self.volumes_trans[volume.index],2)), (volume.x, volume.y - off/2))
 
         if show_faces:
             for face in self.faces:
@@ -143,45 +170,58 @@ class Mesh:
                 if show_coordinates:
                     ax.annotate("i: " + str(face.i), (face.x, face.y + off))
                     ax.annotate("j: " + str(face.j), (face.x, face.y + off/2))
+                if show_transmissibilities:
+                    ax.annotate("T: " + str(np.around(self.faces_trans[face.index],2)), (face.x, face.y - off/2))
 
         if show_adjacents:
-            for face in self.faces_adjacents:
-                for adj in face:
-                    ax.plot([face.x, self.volumes[adj].x], [face.y, self.volumes[adj].y], c="b")
+            for face_idx, face_adj in enumerate(self.faces_adjacents): 
+                for vol_idx in face_adj:
+                    ax.plot([self.faces[face_idx].x, self.volumes[vol_idx].x], [self.faces[face_idx].y, self.volumes[vol_idx].y], c="b")
+        
         ax.set_xlabel("x")
         ax.set_ylabel("y")
         ax.set_title("Malha {}D".format(self.dimension))
         ax.grid()
         plt.show()
 
-    def _plot_3d(self, show_coordinates, show_volumes, show_faces, show_adjacents):
+    def _plot_3d(self, show_coordinates, show_volumes, show_faces, show_adjacents, show_transmissibilities):
         """
         Plota a malha 3D com o índice de cada nó
         """
         fig = plt.figure()
         ax = fig.add_subplot(111, projection='3d')
+        off = 0.1 * (self.dy) * 2
         if show_volumes:
             for volume in self.volumes:
                 ax.scatter(volume.x, volume.y, volume.z, c="r" if volume.internal else "g")
                 ax.text(volume.x, volume.y, volume.z, volume.index)
                 if show_coordinates:
-                    ax.text(volume.x, volume.y, volume.z + 0.1, "i: " + str(volume.i))
-                    ax.text(volume.x, volume.y, volume.z + 0.2, "j: " + str(volume.j))
-                    ax.text(volume.x, volume.y, volume.z + 0.3, "k: " + str(volume.k))
+                    ax.text(volume.x, volume.y, volume.z + off, "i: " + str(volume.i))
+                    ax.text(volume.x, volume.y, volume.z + 2 * off / 3 , "j: " + str(volume.j))
+                    ax.text(volume.x, volume.y, volume.z + off / 3, "k: " + str(volume.k))
+                if show_transmissibilities:
+                    ax.text(volume.x, volume.y, volume.z - off/2, "T: " + str(np.around(self.volumes_trans[volume.index],2)))
         if show_faces:
             for face in self.faces:
                 ax.scatter(face.x, face.y, face.z, c="b" if face.internal else "y")
                 ax.text(face.x, face.y, face.z, face.index)
                 if show_coordinates:
-                    ax.text(face.x, face.y, face.z + 0.1, "i: " + str(face.i))
-                    ax.text(face.x, face.y, face.z + 0.2, "j: " + str(face.j))
-                    ax.text(face.x, face.y, face.z + 0.3, "k: " + str(face.k))
+                    ax.text(face.x, face.y, face.z + off, "i: " + str(face.i))
+                    ax.text(face.x, face.y, face.z + 2 * off / 2, "j: " + str(face.j))
+                    ax.text(face.x, face.y, face.z + off / 3, "k: " + str(face.k))
+                if show_transmissibilities:
+                    ax.text(face.x, face.y, face.z - off/2, "T: " +  str(np.around(self.faces_trans[face.index], 2)))
+        if show_adjacents:
+            for face_idx, face_adj in enumerate(self.faces_adjacents): 
+                for vol_idx in face_adj:
+                    ax.plot([self.faces[face_idx].x, self.volumes[vol_idx].x], [self.faces[face_idx].y, self.volumes[vol_idx].y], [self.faces[face_idx].z, self.volumes[vol_idx].z], c="b")
         ax.set_xlabel("x")
         ax.set_ylabel("y")
         ax.set_zlabel("z")
         ax.set_title("Malha {}D".format(self.dimension))
         ax.grid()
         plt.show()
+
     def _assemble_volumes(self):
         """
         Monta os nós do tipo volume
@@ -215,7 +255,6 @@ class Mesh:
             for j in range(self.ny):
                 for k in range(self.nz):
                     index = i + j * (self.nx + 1) + k * (self.nx + 1) * (self.ny)
-                    print("Face de altura: " + str(index))
                     x = i * self.dx
                     y = (j + 1/2) * self.dy
                     z = (k + 1/2) * self.dz
@@ -230,7 +269,6 @@ class Mesh:
             for j in range(self.ny + 1):
                 for k in range(self.nz):
                     index = i + j * self.nx + k * self.nx * (self.ny + 1) + self.nhfaces
-                    print("Face de comprimento: " + str(index))
                     x = (i + 1/2) * self.dx
                     y = j * self.dy
                     z = (k + 1/2) * self.dz
@@ -252,10 +290,52 @@ class Mesh:
     
     def _assemble_adjacents(self):
         """
-        Monta os nós adjacentes de cada nó
+        Monta a lista de adjacência de cada nó
         """
-        #TODO
-
+        for face in self.faces:
+            if face.type_node == "hface":
+                v1x, v1y, v1z = face.x + self.dx/2, face.y, face.z
+                v2x, v2y, v2z = face.x - self.dx/2, face.y, face.z
+                v1 = self._get_volume(v1x, v1y, v1z)
+                v2 = self._get_volume(v2x, v2y, v2z)
+                self.faces_adjacents[face.index] = np.array([v1 if v1 != None else v2, v2 if v2 != None else v1])
+                if v1:
+                    self.volumes_adjacents[v1] = np.append(self.volumes_adjacents[v1],face.index)
+                if v2:
+                    self.volumes_adjacents[v2] = np.append(self.volumes_adjacents[v2],face.index)
+            elif face.type_node == "lface":
+                v1x, v1y, v1z = face.x, face.y + self.dy/2, face.z
+                v2x, v2y, v2z = face.x, face.y - self.dy/2, face.z
+                v1 = self._get_volume(v1x, v1y, v1z)
+                v2 = self._get_volume(v2x, v2y, v2z)
+                self.faces_adjacents[face.index] = np.array([v1 if v1 != None else v2, v2 if v2 != None else v1])
+                if v1:
+                    self.volumes_adjacents[v1] = np.append(self.volumes_adjacents[v1],face.index)
+                if v2:
+                    self.volumes_adjacents[v2] = np.append(self.volumes_adjacents[v2],face.index)
+            elif face.type_node == "wface":
+                v1x, v1y, v1z = face.x, face.y, face.z + self.dz/2
+                v2x, v2y, v2z = face.x, face.y, face.z - self.dz/2
+                v1 = self._get_volume(v1x, v1y, v1z)
+                v2 = self._get_volume(v2x, v2y, v2z)
+                self.faces_adjacents[face.index] = np.array([v1 if v1 != None else v2, v2 if v2 != None else v1])
+                if v1:
+                    self.volumes_adjacents[v1] = np.append(self.volumes_adjacents[v1],face.index)
+                if v2:
+                    self.volumes_adjacents[v2] = np.append(self.volumes_adjacents[v2],face.index)
+            
+    def _get_volume(self, x, y, z):
+        """
+        Retorna o volume que contém o ponto (x, y, z)
+        """
+        i = int(x / self.dx)
+        j = int(y / self.dy)
+        k = int(z / self.dz)
+        index = i + j * self.nx + k * self.nx * self.ny
+        if(i < 0 or i >= self.nx or j < 0 or j >= self.ny or k < 0 or k >= self.nz or index >= len(self.volumes)):
+            return None
+        return index
+    
     def _is_internal_node(self, i, j, k, node_type):
         """
         Retorna se o nó é interno ou não
@@ -309,13 +389,26 @@ def main():
     (nz, dz) = (2, 0.1)
     mesh1d = Mesh()
     mesh1d.assemble_mesh([(nx, dx)])
-    mesh1d.plot(False, True, True)
+    #mesh1d.plot(False, True, True, True)
     mesh2d = Mesh()
     mesh2d.assemble_mesh([(nx, dx), (ny, dy)])
-    mesh2d.plot(False, True, False)
+    #mesh2d.plot(False, True, True, True)
     mesh3d = Mesh()
     mesh3d.assemble_mesh([(nx, dx), (ny, dy), (nz, dz)])
-    mesh3d.plot(False, False, True)
+    #mesh3d.plot(False, False, True, True)
+
+    K1d = np.array([[[i + 1 for i in range (mesh1d.nx)]]])
+    K2d = np.array([[[i + 1 for i in range(mesh2d.nx)] for j in range(mesh2d.ny)]])
+    K3d = np.array([[[i + 1 for i in range(mesh3d.nx)] for j in range(mesh3d.ny)] for k in range(mesh3d.nz)])
+    
+    mesh1d.assemble_faces_transmissibilities(K1d)
+    mesh2d.assemble_faces_transmissibilities(K2d)
+    mesh3d.assemble_faces_transmissibilities(K3d)
+
+    mesh1d.plot(show_coordinates=False, show_volumes=True, show_faces=True, show_adjacents=True, show_transmissibilities=True)
+    mesh2d.plot(show_coordinates=False, show_volumes=True, show_faces=True, show_adjacents=True, show_transmissibilities=True)
+    mesh3d.plot(show_coordinates=False, show_volumes=True, show_faces=True, show_adjacents=True, show_transmissibilities=True)
+    
 
 if __name__ == "__main__":
     main()
