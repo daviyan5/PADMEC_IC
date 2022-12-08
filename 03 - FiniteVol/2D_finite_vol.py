@@ -2,6 +2,7 @@
 
 import numpy as np
 import matplotlib.pyplot as plt
+import scipy as sp
 import time
 
 # ----------------- 2D TPFA equation -----------------
@@ -44,6 +45,7 @@ def flip_all(A):
     for ar in A:
         ar = np.flip(ar,0)
     return A
+
 def solve(K, P, x, y, q):
     n = len(x)
     m = len(y)
@@ -75,12 +77,12 @@ def solve(K, P, x, y, q):
     #print(np.around(Keqxb, 4))
     #print(np.around(Keqyf, 4))
     #print(np.around(Keqyb, 4))
-    Keqxf, Keqxb, Keqyf, Keqyb, dxf, dxb, dyf, dyb = flip_all((Keqxf, Keqxb, Keqyf, Keqyb, dxf, dxb, dyf, dyb))
+    #Keqxf, Keqxb, Keqyf, Keqyb, dxf, dxb, dyf, dyb = flip_all((Keqxf, Keqxb, Keqyf, Keqyb, dxf, dxb, dyf, dyb))
     for i in range(n):
         for j in range(m):
             k = i * m + j
             b[k] = q[(n - 1 - i)][j]
-            #i = (n - 1 - i)
+            i = (n - 1 - i)
             # p[i+1][j], k - m
             c1 = (-Keqyf[i][j] / dxf[i])
             # p[i][j], k
@@ -91,7 +93,7 @@ def solve(K, P, x, y, q):
             c4 = (-Keqxf[i][j] / dyf[j])
             # p[i][j-1], k - 1
             c5 = (-Keqxb[i][j] / dyb[j])
-            #i = (n - 1 - i)
+            i = (n - 1 - i)
             if i == n - 1:
                 c2 += c1
                 c1 = 0
@@ -122,7 +124,10 @@ def solve(K, P, x, y, q):
     np.set_printoptions(suppress=True)
     p = np.linalg.solve(A, b)
     return np.flip(p.reshape(n, m),0), A
-            
+
+
+
+
 def main():
     # Define the grid
     n = 3
