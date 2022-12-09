@@ -1,6 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.sparse import csr_matrix
+from scipy.sparse.linalg import spsolve
 import time
 
 class Node:
@@ -66,6 +67,8 @@ class Mesh:
         self.nvols, self.nfaces = 0, 0
         self.volumes_trans = None
         self.faces_trans = None
+        self.A = None
+        self.p = None
     
     def assemble_mesh(self, axis_attibutes):
         """
@@ -164,12 +167,11 @@ class Mesh:
         row_index = np.hstack((row_index_p, col_index_p))
         col_index = np.hstack((col_index_p, row_index_p))
 
-        A = csr_matrix((self.faces_trans, (row_index, col_index)), shape=(self.nvols, self.nvols))
-        A.setdiag(0)
-        A.setdiag(-A.sum(axis=1))
+        self.A = csr_matrix((self.faces_trans, (row_index, col_index)), shape=(self.nvols, self.nvols))
+        self.A.setdiag(0)
+        self.A.setdiag(-self.A.sum(axis=1))
 
         print("Time required to assemble TPFA matrix: ", round(time.time() - start_time, 5), "s")
-        return A
 
     def plot(self, options = None):
         """
@@ -181,50 +183,83 @@ class Mesh:
             self._plot_3d(options)
         else:
             raise Exception("Número de eixos inválido")
-    
+        
+    def set_boundary_conditions(self, bc, volume):
+        """
+        Define as condições de contorno
+        """
+        i, j, k = volume
+        i = i if i >= 0 else self.nx + i
+        j = j if j >= 0 else self.ny + j
+        k = k if k >= 0 else self.nz + k
+        index = i + j * self.nx + k * self.nx * self.ny
+        if bc == "dirichlet":
+            self.A[index, :] = 0
+            self.A[index, index] = 1
+
+        
+    def solve_tpfa(self, q):
+        """
+        Resolve o sistema linear da malha
+        """
+        start_time = time.time()
+
+        self.p = spsolve(self.A, q)
+
+        print("Time required to solve TPFA system: ", round(time.time() - start_time, 5), "s")
+        return self.p
+
     def _plot_2d(self, options):
         """
         Plota a malha 2D com o índice de cada nó
         """
         (show_coordinates, show_volumes, 
          show_faces, show_adjacents, 
-         show_transmissibilities, show_A) = options if options else (False, True, True, False, False, False)
+         show_transmissibilities, show_A,
+         show_solution) = options if options else (False, True, True, False, False, False, False)
 
         off = 0.1 * (self.dy) * (0.06 if self.dimension == 1 else 2)
         fig, ax = plt.subplots()
         if show_volumes:
             for volume in self.volumes:
-                ax.scatter(volume.x, volume.y, c="r" if volume.internal else "g")
+                if not show_solution:
+                    ax.scatter(volume.x, volume.y, marker = "s", c="r" if volume.internal else "g") 
+                else:
+                    color = (self.p[volume.index] - min(self.p))/(max(self.p) - min(self.p)) * 255
+                    print(color)
+                    ax.scatter(volume.x, volume.y, s = (self.dx) * 720, c = color, marker = "s")
                 ax.annotate(volume.index, (volume.x, volume.y))
                 if show_coordinates:
                     ax.annotate("i: " + str(volume.i), (volume.x, volume.y + off))
                     ax.annotate("j: " + str(volume.j), (volume.x, volume.y + off/2))
                 if show_transmissibilities:
-                    ax.annotate("T: " + str(np.around(self.volumes_trans[volume.index],4)), (volume.x, volume.y - off/2))
+                    plt.annotate("T: " + str(np.around(self.volumes_trans[volume.index],4)), (volume.x, volume.y - off/2))
+                
 
         if show_faces:
             for face in self.faces:
-                ax.scatter(face.x, face.y, c="b" if face.internal else "y")
-                ax.annotate(face.index, (face.x, face.y))
+                plt.scatter(face.x, face.y, c="b" if face.internal else "y")
+                plt.annotate(face.index, (face.x, face.y))
                 if show_coordinates:
-                    ax.annotate("i: " + str(face.i), (face.x, face.y + off))
-                    ax.annotate("j: " + str(face.j), (face.x, face.y + off/2))
+                    plt.annotate("i: " + str(face.i), (face.x, face.y + off))
+                    plt.annotate("j: " + str(face.j), (face.x, face.y + off/2))
                 if show_transmissibilities:
-                    ax.annotate("T: " + str(np.around(self.faces_trans[face.index],4)), (face.x, face.y - off/2))
+                    plt.annotate("T: " + str(np.around(self.faces_trans[face.index],4)), (face.x, face.y - off/2))
 
         if show_adjacents:
             for face_idx, face_adj in enumerate(self.faces_adjacents): 
                 for vol_idx in face_adj:
-                    ax.plot([self.faces[face_idx].x, self.volumes[vol_idx].x], [self.faces[face_idx].y, self.volumes[vol_idx].y], c="b")
+                    plt.plot([self.faces[face_idx].x, self.volumes[vol_idx].x], [self.faces[face_idx].y, self.volumes[vol_idx].y], c="b")
         
-        ax.set_xlabel("x")
-        ax.set_ylabel("y")
-        ax.set_title("Malha {}D".format(self.dimension))
-        ax.grid()
+        plt.set_xlabel("x")
+        plt.set_ylabel("y")
+        plt.set_title("Malha {}D".format(self.dimension))
+        plt.grid()
+        plt.colorbar()
         plt.show()
 
         if show_A:
-            print("Matriz de transmissibilidade:\n\n", np.around(self.assemble_tpfa_matrix().todense(),4), "\n")
+            print("Matriz de transmissibilidade:\n\n", np.around(self.A.todense(),4), "\n")
 
     def _plot_3d(self, options):
         """
@@ -232,7 +267,8 @@ class Mesh:
         """
         (show_coordinates, show_volumes, 
          show_faces, show_adjacents, 
-         show_transmissibilities, show_A) = options if options else (False, True, True, False, False, False)
+         show_transmissibilities, show_A,
+         show_solution) = options if options else (False, True, True, False, False, False, False)
         
         fig = plt.figure()
         ax = fig.add_subplot(111, projection='3d')
@@ -240,8 +276,11 @@ class Mesh:
         
         if show_volumes:
             for volume in self.volumes:
-                ax.scatter(volume.x, volume.y, volume.z, c="r" if volume.internal else "g")
-                ax.text(volume.x, volume.y, volume.z, volume.index)
+                if not show_solution:
+                    ax.scatter(volume.x, volume.y, volume.z, marker = "s", c="r" if volume.internal else "g") 
+                else:
+                    color = (self.p[volume.index] - min(self.p))/(max(self.p) - min(self.p)) * 255
+                    ax.scatter(volume.x, volume.y, volume.z, s = (self.dx) * 720, c=color, marker = "s", cmap="plasma")
                 if show_coordinates:
                     ax.text(volume.x, volume.y, volume.z + off, "i: " + str(volume.i))
                     ax.text(volume.x, volume.y, volume.z + 2 * off / 3 , "j: " + str(volume.j))
@@ -273,7 +312,7 @@ class Mesh:
         plt.show()
 
         if show_A:
-            print("Matriz de transmissibilidade:\n\n", np.around(self.assemble_tpfa_matrix().todense(),4), "\n")
+            print("Matriz de transmissibilidade:\n\n", np.around(self.A.todense(),4), "\n")
             
     def _assemble_volumes(self):
         """
@@ -437,9 +476,9 @@ class Mesh:
 
 def main():
     np.set_printoptions(suppress=True)
-    (nx, dx) = (1000, 1)
-    (ny, dy) = (1000, 1)
-    (nz, dz) = (1000, 1)
+    (nx, dx) = (3, 1)
+    (ny, dy) = (3, 1)
+    (nz, dz) = (3, 1)
 
     mesh1d = Mesh()
     mesh1d.assemble_mesh([(nx, dx)])
@@ -459,22 +498,45 @@ def main():
     K3d = np.array([[[1for i in range(mesh3d.nx)] for j in range(mesh3d.ny)] for k in range(mesh3d.nz)])
     
     mesh1d.assemble_faces_transmissibilities(K1d)
-    A1d = mesh1d.assemble_tpfa_matrix()
+    mesh1d.assemble_tpfa_matrix()
 
     mesh2d.assemble_faces_transmissibilities(K2d)
-    A2d = mesh2d.assemble_tpfa_matrix()
+    mesh2d.assemble_tpfa_matrix()
 
     mesh3d.assemble_faces_transmissibilities(K3d)
-    A3d = mesh3d.assemble_tpfa_matrix()
+    mesh3d.assemble_tpfa_matrix()
+    
+    
+    q1d = np.zeros(mesh1d.nvols)
+    q1d[0] = -200
+    q1d[-1] = -100
+    mesh1d.set_boundary_conditions("dirichlet", ( 0, 0, 0))
+    mesh1d.set_boundary_conditions("dirichlet", (-1, 0, 0))
+
+    q2d = np.zeros(mesh2d.nvols)
+    q2d[0] = 1
+    q2d[-1] = 1
+    mesh2d.set_boundary_conditions("dirichlet", ( 0, 0, 0))
+    mesh2d.set_boundary_conditions("neumann",   (-1,-1, 0))
+    
+
+    q3d = np.zeros(mesh3d.nvols)
+    q3d[0] = 1
+    q3d[-1] = 1
+    mesh3d.set_boundary_conditions("dirichlet", ( 0, 0, 0))
+    mesh3d.set_boundary_conditions("neumann",   (-1,-1,-1))
+
+    p1d = mesh1d.solve_tpfa(q1d)
+    p2d = mesh2d.solve_tpfa(q2d)
+    p3d = mesh3d.solve_tpfa(q3d)
 
     options = (show_coordinates, show_volumes, 
                show_faces, show_adjacents, 
-               show_transmissibilities, show_A) = (False, True, True, True, False, False)
+               show_transmissibilities, show_A, show_solution) = (False, True, False, False, False, False, True)
     
-    #mesh1d.plot(options)
-    #mesh2d.plot(options)
-    #mesh3d.plot(options)
-    
+    mesh1d.plot(options)
+    mesh2d.plot(options)
+    mesh3d.plot(options)
     
 
 if __name__ == "__main__":
