@@ -187,18 +187,25 @@ class Mesh:
         else:
             raise Exception("Número de eixos inválido")
         
-    def set_boundary_conditions(self, bc, volume):
+    def set_boundary_conditions(self, bc, q, f):
         """
         Define as condições de contorno
         """
-        i, j, k = volume
-        i = i if i >= 0 else self.nx + i
-        j = j if j >= 0 else self.ny + j
-        k = k if k >= 0 else self.nz + k
-        index = i + j * self.nx + k * self.nx * self.ny
+        # Get x, y and z and indexes of boundary volumes nodes
+        i = np.arange(self.nx)
+        j = np.arange(self.ny)
+        k = np.arange(self.nz)
+        internal = self._is_internal_node(i, j, k, "volume")
+        index = np.where(internal == False)[0]
+        x = (index % self.nx + 1/2) * self.dx
+        y = ((index // self.nx) % self.ny + 1/2) * self.dy
+        z = (index // (self.nx * self.ny) + 1/2) * self.dz
         if bc == "dirichlet":
             self.A[index, :] = 0
             self.A[index, index] = 1
+            q[index] = f(x, y, z)
+        elif bc == "neumann":
+            q[index] -= f(x, y, z)
 
         
     def solve_tpfa(self, q):
@@ -630,17 +637,20 @@ class Mesh:
         """
         if(node_type == "volume"):
             if(self.dimension == 1):
-                return i != 0 and i != self.nx - 1
+                return np.logical_and(i != 0, i != self.nx - 1)
             elif(self.dimension == 2):
-                return (i != 0 and i != self.nx - 1) and (j != 0 and j != self.ny - 1)
+                return np.logical_and(np.logical_and(i != 0, i != self.nx - 1), 
+                                      np.logical_and(j != 0, j != self.ny - 1))
             elif(self.dimension == 3):
-                return (i != 0 and i != self.nx - 1) and (j != 0 and j != self.ny - 1) and (k != 0 and k != self.nz - 1)
+                return np.logical_and(np.logical_and(i != 0, i != self.nx - 1), 
+                                      np.logical_and(j != 0, j != self.ny - 1), 
+                                      np.logical_and(k != 0, k != self.nz - 1))
         if(node_type == "hface"):
-            return i != 0 and i != self.nx
+            return np.logical_and(i != 0, i != self.nx)
         if(node_type == "lface"):
-            return j != 0 and j != self.ny
+            return np.logical_and(j != 0, j != self.ny)
         if(node_type == "wface"):
-            return k != 0 and k != self.nz
+            return np.logical_and(k != 0, k != self.nz)
 
     def _get_num_volumes(self):
         """
@@ -673,8 +683,8 @@ class Mesh:
 
 def main():
     np.set_printoptions(suppress=True)
-    (nx, dx) = (1000, 1)
-    (ny, dy) = (1000, 1)
+    (nx, dx) = (10, 1)
+    (ny, dy) = (10, 1)
     (nz, dz) = (10, 1)
 
     mesh1d = Mesh()
@@ -704,24 +714,18 @@ def main():
     mesh3d.assemble_tpfa_matrix()
     
     
+    f1d = lambda x, y, z: 0 if x != 0 else 100
     q1d = np.zeros(mesh1d.nvols)
-    q1d[0] = -200
-    q1d[-1] = -100
-    mesh1d.set_boundary_conditions("dirichlet", ( 0, 0, 0))
-    mesh1d.set_boundary_conditions("dirichlet", (-1, 0, 0))
+    mesh1d.set_boundary_conditions("dirichlet", q1d, f1d)
 
+    f2d = lambda x, y, z: 0 if y != 0 else 13
     q2d = np.zeros(mesh2d.nvols)
-    q2d[0] = 1
-    q2d[-1] = 1
-    mesh2d.set_boundary_conditions("dirichlet", ( 0, 0, 0))
-    mesh2d.set_boundary_conditions("neumann",   (-1,-1, 0))
+    mesh2d.set_boundary_conditions("dirichlet", q2d, f2d)
+    mesh2d.set_boundary_conditions("neumann", q2d, f2d)
     
-
+    f3d = lambda x, y, z: 0 if x != 0 else 14
     q3d = np.zeros(mesh3d.nvols)
-    q3d[0] = 1
-    q3d[-1] = 1
-    mesh3d.set_boundary_conditions("dirichlet", ( 0, 0, 0))
-    mesh3d.set_boundary_conditions("neumann",   (-1,-1,-1))
+    mesh3d.set_boundary_conditions("dirichlet", q3d, f3d)
 
     p1d = mesh1d.solve_tpfa(q1d)
     p2d = mesh2d.solve_tpfa(q2d)
