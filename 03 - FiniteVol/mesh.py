@@ -109,21 +109,18 @@ class Mesh:
 
         self.nfaces = self._get_num_faces()
 
+        self.nhfaces = (self.nx + 1) * self.ny * self.nz
+        self.nlfaces = self.nx * (self.ny + 1) * self.nz
+        self.nwfaces = self.nx * self.ny * (self.nz + 1)
+
         self.faces_trans = np.empty((self.nfaces), dtype=float)
         self.faces_adjacents = np.empty((self.nfaces, 2), dtype = int)
-        
+    
+        start_quick_time = time.time()
+        self._assemble_adjacents_quick()
+        print("Time required to assemble adjs: ", round(time.time() - start_quick_time, 5), "s")
 
-
-        
-
-        start_adjs_time = time.time()
-        self._assemble_adjacents()
-        adj_quick = self._assemble_adjacents_quick()
-        print("adjacents\n", self.faces_adjacents)
-        print("quick adjacents\n", adj_quick)
-        print(self.faces_adjacents == adj_quick)
-        assert np.array_equal(self.faces_adjacents, adj_quick)
-        print("Time required to assemble adjs: ", round(time.time() - start_adjs_time, 5), "s")
+        assert self.faces_adjacents.shape == (self.nfaces, 2)
 
         print("Time required to assemble mesh: ", round(time.time() - start_time, 5), "s")
     
@@ -165,8 +162,13 @@ class Mesh:
 
         row_index_p = self.faces_adjacents[:, 0]
         col_index_p = self.faces_adjacents[:, 1]
+        
         row_index = np.hstack((row_index_p, col_index_p))
         col_index = np.hstack((col_index_p, row_index_p))
+
+        assert len(row_index) == len(col_index)
+        assert len(row_index) == 2 * self.nfaces
+        assert len(row_index) == len(self.faces_trans)
 
         self.A = csr_matrix((self.faces_trans, (row_index, col_index)), shape=(self.nvols, self.nvols))
         self.A.setdiag(0)
@@ -352,7 +354,6 @@ class Mesh:
         """
         Monta os nós do tipo face de altura
         """
-        self.nhfaces = (self.nx + 1) * self.ny * self.nz
         for i in range(self.nx + 1):
             for j in range(self.ny):
                 for k in range(self.nz):
@@ -367,7 +368,6 @@ class Mesh:
         """
         Monta os nós do tipo face de comprimento
         """
-        self.nlfaces = self.nx * (self.ny + 1) * self.nz
         for i in range(self.nx):
             for j in range(self.ny + 1):
                 for k in range(self.nz):
@@ -375,14 +375,13 @@ class Mesh:
                     x = (i + 1/2) * self.dx
                     y = j * self.dy
                     z = (k + 1/2) * self.dz
-                    face = Node("hface", self._is_internal_node(i, j, k, "hface"), index, i, j, k, x, y, z)
+                    face = Node("lface", self._is_internal_node(i, j, k, "lface"), index, i, j, k, x, y, z)
                     yield face
     
     def wfaces(self):
         """
         Monta os nós do tipo face de largura
         """
-        self.nwfaces = self.nx * self.ny * (self.nz + 1)
         for i in range(self.nx):
             for j in range(self.ny):
                 for k in range(self.nz + 1):
@@ -390,27 +389,38 @@ class Mesh:
                     x = (i + 1/2) * self.dx
                     y = (j + 1/2) * self.dy
                     z = k * self.dz
-                    face = Node("hface", self._is_internal_node(i, j, k, "hface"), index, i, j, k, x, y, z)
+                    face = Node("wface", self._is_internal_node(i, j, k, "wface"), index, i, j, k, x, y, z)
                     yield face
     
     def _assemble_adjacents_quick(self):
-
-        faces_adjacents = np.zeros((self.nhfaces + self.nlfaces + self.nwfaces, 2), dtype=int)
+        """
+        Monta a matriz de adjacência de forma rápida
+        """
         hfaces = np.arange(self.nhfaces)
         hfaces_coords = self._get_faces_coords_from_index(hfaces, "hface")
         hfaces_coords = hfaces_coords.T
-        faces_adjacents[:self.nhfaces] = self._get_adjacents_to_face(hfaces_coords, "hface")
+
+        assert hfaces_coords.shape == (self.nhfaces, 3)
+        assert self.faces_adjacents.shape == (self.nfaces, 2)
+
+        self.faces_adjacents[:self.nhfaces] = self._get_adjacents_to_face(hfaces_coords, "hface")
+
         if self.dimension >= 2:
             lfaces = np.arange(self.nhfaces, self.nhfaces + self.nlfaces)
             lfaces_coords = self._get_faces_coords_from_index(lfaces, "lface")
             lfaces_coords = lfaces_coords.T
-            faces_adjacents[self.nhfaces:self.nhfaces + self.nlfaces] = self._get_adjacents_to_face(lfaces_coords, "lface")
+            assert lfaces_coords.shape == (self.nlfaces, 3)
+
+            self.faces_adjacents[self.nhfaces:self.nhfaces + self.nlfaces] = self._get_adjacents_to_face(lfaces_coords, "lface")
+
             if self.dimension == 3:
                 wfaces = np.arange(self.nhfaces + self.nlfaces, self.nhfaces + self.nlfaces + self.nwfaces)
                 wfaces_coords = self._get_faces_coords_from_index(wfaces, "wface")
                 wfaces_coords = wfaces_coords.T
-                faces_adjacents[self.nhfaces + self.nlfaces:] = self._get_adjacents_to_face(wfaces_coords, "wface")
-        return faces_adjacents
+                assert wfaces_coords.shape == (self.nwfaces, 3)
+                
+                self.faces_adjacents[self.nhfaces + self.nlfaces:] = self._get_adjacents_to_face(wfaces_coords, "wface")
+        
 
         
     def _assemble_adjacents(self):
@@ -424,7 +434,7 @@ class Mesh:
                 v1 = self._get_volume((v1x, v1y, v1z))
                 v2 = self._get_volume((v2x, v2y, v2z))
                 self.faces_adjacents[face.index] = np.array([v1.index if v1 != None else v2.index, v2.index if v2 != None else v1.index])
-                
+
             elif face.type_node == "lface":
                 v1x, v1y, v1z = face.x, face.y + self.dy/2, face.z
                 v2x, v2y, v2z = face.x, face.y - self.dy/2, face.z
@@ -438,7 +448,7 @@ class Mesh:
                 v1 = self._get_volume((v1x, v1y, v1z))
                 v2 = self._get_volume((v2x, v2y, v2z))
                 self.faces_adjacents[face.index] = np.array([v1.index if v1 != None else v2.index, v2.index if v2 != None else v1.index])
-                
+
     def _get_adjacents_to_face(self, face_coords, face_type):
         """
         Retorna os índices dos volumes adjacentes a uma hface
@@ -459,12 +469,13 @@ class Mesh:
             v1z += self.dz/2
             v2z -= self.dz/2
 
-        v1x = np.clip(v1x, self.dx/2, (self.nx - 1/2) * self.dx)
-        v1y = np.clip(v1y, self.dy/2, (self.ny - 1/2) * self.dy)
-        v1z = np.clip(v1z, self.dz/2, (self.nz - 1/2) * self.dz)
-        v2x = np.clip(v2x, self.dx/2, (self.nx - 1/2) * self.dx)
-        v2y = np.clip(v2y, self.dy/2, (self.ny - 1/2) * self.dy)
-        v2z = np.clip(v2z, self.dz/2, (self.nz - 1/2) * self.dz)
+        np.clip(v1x, self.dx/2, (self.nx - 1/2) * self.dx, out = v1x)
+        np.clip(v1y, self.dy/2, (self.ny - 1/2) * self.dy, out = v1y)
+        np.clip(v1z, self.dz/2, (self.nz - 1/2) * self.dz, out = v1z)
+        
+        np.clip(v2x, self.dx/2, (self.nx - 1/2) * self.dx, out = v2x)
+        np.clip(v2y, self.dy/2, (self.ny - 1/2) * self.dy, out = v2y)
+        np.clip(v2z, self.dz/2, (self.nz - 1/2) * self.dz, out = v2z)
 
         v1 = self._get_vol_index_from_coords((v1x, v1y, v1z))
         v2 = self._get_vol_index_from_coords((v2x, v2y, v2z))
@@ -662,19 +673,19 @@ class Mesh:
 
 def main():
     np.set_printoptions(suppress=True)
-    (nx, dx) = (3, 1)
-    (ny, dy) = (3, 1)
-    (nz, dz) = (3, 1)
+    (nx, dx) = (1000, 1)
+    (ny, dy) = (1000, 1)
+    (nz, dz) = (10, 1)
 
     mesh1d = Mesh()
     mesh1d.assemble_mesh([(nx, dx)])
     
     mesh2d = Mesh()
     mesh2d.assemble_mesh([(nx, dx), (ny, dy)])
-    exit()
+    
     mesh3d = Mesh()
     mesh3d.assemble_mesh([(nx, dx), (ny, dy), (nz, dz)])
-    
+
     K1d = np.array([[[1. for i in range (mesh1d.nx)]]])
     K1d[0,0,2:] = 1000
 
