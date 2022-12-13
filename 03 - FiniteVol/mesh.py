@@ -206,7 +206,6 @@ class Mesh:
             q[index] = f(x, y, z)
         elif bc == "neumann":
             q[index] -= f(x, y, z)
-
         
     def solve_tpfa(self, q):
         """
@@ -215,9 +214,8 @@ class Mesh:
         start_time = time.time()
 
         self.p = spsolve(self.A, q)
-
+        assert np.allclose(self.A.dot(self.p), q)
         print("Time required to solve TPFA system: ", round(time.time() - start_time, 5), "s")
-        return self.p
 
     def _plot_2d(self, options):
         """
@@ -230,21 +228,24 @@ class Mesh:
 
         off = 0.1 * (self.dy) * (0.06 if self.dimension == 1 else 2)
         fig, ax = plt.subplots()
-        if show_volumes:
-            for volume in self.volumes():
-                if not show_solution:
-                    ax.scatter(volume.x, volume.y, marker = "s", c="r" if volume.internal else "g") 
-                else:
-                    color = (self.p[volume.index] - min(self.p))/(max(self.p) - min(self.p)) * 255
-                    ax.scatter(volume.x, volume.y, s = (self.dx) * 720, c = color, marker = "s")
-                ax.annotate(volume.index, (volume.x, volume.y))
-                if show_coordinates:
-                    ax.annotate("i: " + str(volume.i), (volume.x, volume.y + off))
-                    ax.annotate("j: " + str(volume.j), (volume.x, volume.y + off/2))
-                if show_transmissibilities:
-                    plt.annotate("T: " + str(np.around(self.volumes_trans[volume.index],4)), (volume.x, volume.y - off/2))
-                
 
+        if show_volumes:
+            index = np.arange(self.nvols)
+            x = (index % self.nx + 1/2) * self.dx
+            y = ((index // self.nx) % self.ny + 1/2) * self.dy
+            i = index % self.nx
+            j = (index // self.nx) % self.ny
+            internal = self._is_internal_node(i, j, 0, "volume")
+            if not show_solution:
+                plt.scatter(x, y, c="b" if internal else "y")
+            else:
+                color = self.p[index]
+                plt.scatter(x, y, c=color, s = (self.dx) * 720, marker="s", cmap="jet")
+                plt.colorbar()
+            if show_coordinates:
+                plt.annotate("i: " + str(i), (x, y + off))
+                plt.annotate("j: " + str(j), (x, y + off/2))
+            
         if show_faces:
             for face in self.faces():
                 plt.scatter(face.x, face.y, c="b" if face.internal else "y")
@@ -263,11 +264,10 @@ class Mesh:
                     plt.plot([face.x, vol.x], 
                              [face.y, vol.y], c="b")
         
-        plt.set_xlabel("x")
-        plt.set_ylabel("y")
-        plt.set_title("Malha {}D".format(self.dimension))
-        plt.grid()
-        plt.colorbar()
+        ax.set_xlabel("x")
+        ax.set_ylabel("y")
+        ax.set_title("Malha {}D".format(self.dimension))
+        ax.grid()
         plt.show()
 
         if show_A:
@@ -287,19 +287,23 @@ class Mesh:
         off = 0.1 * (self.dy) * 2
         
         if show_volumes:
-            for volume in self.volumes():
-                if not show_solution:
-                    ax.scatter(volume.x, volume.y, volume.z, marker = "s", c="r" if volume.internal else "g") 
-                else:
-                    color = (self.p[volume.index] - min(self.p))/(max(self.p) - min(self.p)) * 255
-                    ax.scatter(volume.x, volume.y, volume.z, s = (self.dx) * 720, c=color, marker = "s", cmap="plasma")
-                if show_coordinates:
-                    ax.text(volume.x, volume.y, volume.z + off, "i: " + str(volume.i))
-                    ax.text(volume.x, volume.y, volume.z + 2 * off / 3 , "j: " + str(volume.j))
-                    ax.text(volume.x, volume.y, volume.z + off / 3, "k: " + str(volume.k))
-                if show_transmissibilities:
-                    ax.text(volume.x, volume.y, volume.z - off/2, "T: " + str(np.around(self.volumes_trans[volume.index], 4)))
-        
+            index = np.arange(self.nvols)
+            i, j, k = index % self.nx, (index // self.nx) % self.ny, index // (self.nx * self.ny)
+            x, y, z = (i + 1/2) * self.dx, (j + 1/2) * self.dy, (k + 1/2) * self.dz
+            internal = self._is_internal_node(i, j, k, "volume")
+            if not show_solution:
+                ax.scatter(x, y, z, c="r" if internal else "g")
+            else:
+                color = self.p[index]
+                ax.scatter(x, y, z, c=color, s = (self.dx) * 720, marker = "s", cmap = "jet")
+                fig.colorbar(plt.cm.ScalarMappable(cmap="jet"), ax=ax)
+            if show_coordinates:
+                ax.text(x, y, z + off, "i: " + str(i))
+                ax.text(x, y, z + 2 * off / 2, "j: " + str(j))
+                ax.text(x, y, z + off / 3, "k: " + str(k))
+            if show_transmissibilities:
+                ax.text(x, y, z - off/2, "T: " +  str(np.around(self.volumes_trans[index], 4)))
+            
         if show_faces:
             for face in self.faces():
                 ax.scatter(face.x, face.y, face.z, c="b" if face.internal else "y")
@@ -637,14 +641,15 @@ class Mesh:
         """
         if(node_type == "volume"):
             if(self.dimension == 1):
-                return np.logical_and(i != 0, i != self.nx - 1)
+                return np.logical_and(i != 0, i != (self.nx - 1))
             elif(self.dimension == 2):
-                return np.logical_and(np.logical_and(i != 0, i != self.nx - 1), 
-                                      np.logical_and(j != 0, j != self.ny - 1))
+                return np.logical_and(np.logical_and(i != 0, i != (self.nx - 1)), 
+                                      np.logical_and(j != 0, j != (self.ny - 1)))
             elif(self.dimension == 3):
-                return np.logical_and(np.logical_and(i != 0, i != self.nx - 1), 
-                                      np.logical_and(j != 0, j != self.ny - 1), 
-                                      np.logical_and(k != 0, k != self.nz - 1))
+                return np.logical_and(np.logical_and(
+                                      np.logical_and(i != 0, i != (self.nx - 1)), 
+                                      np.logical_and(j != 0, j != (self.ny - 1))), 
+                                      np.logical_and(k != 0, k != (self.nz - 1)))
         if(node_type == "hface"):
             return np.logical_and(i != 0, i != self.nx)
         if(node_type == "lface"):
@@ -683,9 +688,9 @@ class Mesh:
 
 def main():
     np.set_printoptions(suppress=True)
-    (nx, dx) = (10, 1)
-    (ny, dy) = (10, 1)
-    (nz, dz) = (10, 1)
+    (nx, dx) = (3, 1)
+    (ny, dy) = (3, 1)
+    (nz, dz) = (3, 1)
 
     mesh1d = Mesh()
     mesh1d.assemble_mesh([(nx, dx)])
@@ -714,30 +719,30 @@ def main():
     mesh3d.assemble_tpfa_matrix()
     
     
-    f1d = lambda x, y, z: 0 if x != 0 else 100
+    f1d = lambda x, y, z: 1
     q1d = np.zeros(mesh1d.nvols)
     mesh1d.set_boundary_conditions("dirichlet", q1d, f1d)
 
-    f2d = lambda x, y, z: 0 if y != 0 else 13
+    f2d = lambda x, y, z: 1
     q2d = np.zeros(mesh2d.nvols)
     mesh2d.set_boundary_conditions("dirichlet", q2d, f2d)
     mesh2d.set_boundary_conditions("neumann", q2d, f2d)
     
-    f3d = lambda x, y, z: 0 if x != 0 else 14
+    f3d = lambda x, y, z: 1
     q3d = np.zeros(mesh3d.nvols)
     mesh3d.set_boundary_conditions("dirichlet", q3d, f3d)
 
-    p1d = mesh1d.solve_tpfa(q1d)
-    p2d = mesh2d.solve_tpfa(q2d)
-    p3d = mesh3d.solve_tpfa(q3d)
+    mesh1d.solve_tpfa(q1d)
+    mesh2d.solve_tpfa(q2d)
+    mesh3d.solve_tpfa(q3d)
 
     options = (show_coordinates, show_volumes, 
                show_faces, show_adjacents, 
-               show_transmissibilities, show_A, show_solution) = (False, True, False, False, False, False, True)
+               show_transmissibilities, show_A, show_solution) = (False, True, True, False, False, True, True)
     
-    #mesh1d.plot(options)
-    #mesh2d.plot(options)
-    #mesh3d.plot(options)
+    mesh1d.plot(options)
+    mesh2d.plot(options)
+    mesh3d.plot(options)
     
 
 if __name__ == "__main__":
