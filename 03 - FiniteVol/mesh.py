@@ -154,7 +154,7 @@ class Mesh:
 
         print("Time required to assemble faces transmissibilities: ", round(time.time() - start_time, 5), "s")
         
-    def assemble_tpfa_matrix(self):
+    def assemble_tpfa_matrix(self, dense = False):
         """
         Monta a matriz de transmissibilidade TPFA
         """
@@ -171,9 +171,13 @@ class Mesh:
         assert len(row_index) == len(self.faces_trans)
 
         self.A = csr_matrix((self.faces_trans, (row_index, col_index)), shape=(self.nvols, self.nvols))
-        self.A.setdiag(0)
-        self.A.setdiag(-self.A.sum(axis=1))
-
+        if dense:
+            self.A = self.A.todense()
+            np.fill_diagonal(self.A, 0)
+            np.fill_diagonal(self.A, -self.A.sum(axis=1))
+        else:
+            self.A.setdiag(0)
+            self.A.setdiag(-self.A.sum(axis=1))
         print("Time required to assemble TPFA matrix: ", round(time.time() - start_time, 5), "s")
 
     def plot(self, options = None):
@@ -195,15 +199,22 @@ class Mesh:
         i = np.arange(self.nx)
         j = np.arange(self.ny)
         k = np.arange(self.nz)
-        internal = self._is_internal_node(i, j, k, "volume")
+        i, j, k = np.meshgrid(i, j, k, indexing="ij")
+        internal = self._is_internal_node(i, j, k, "volume").flatten()
+        
         index = np.where(internal == False)[0]
         x = (index % self.nx + 1/2) * self.dx
         y = ((index // self.nx) % self.ny + 1/2) * self.dy
         z = (index // (self.nx * self.ny) + 1/2) * self.dz
+        assert len(x) == len(y) == len(z) == len(index)
         if bc == "dirichlet":
+            f_temp = f(x, y, z)
+            non_zero = np.where(f_temp != 0)[0]
+            index = index[non_zero]
+            f_temp = f_temp[non_zero]
             self.A[index, :] = 0
             self.A[index, index] = 1
-            q[index] = f(x, y, z)
+            q[index] = f_temp
         elif bc == "neumann":
             q[index] -= f(x, y, z)
         
@@ -212,8 +223,14 @@ class Mesh:
         Resolve o sistema linear da malha
         """
         start_time = time.time()
+        if type(self.A) == np.matrix:
+            self.p = np.linalg.solve(self.A, q)
+        elif type(self.A) == csr_matrix:
+            self.p = spsolve(self.A, q)
 
-        self.p = spsolve(self.A, q)
+        #print(self.p)
+        #print(np.around(self.A.todense(), 1))
+        #print(q)
         assert np.allclose(self.A.dot(self.p), q)
         print("Time required to solve TPFA system: ", round(time.time() - start_time, 5), "s")
 
@@ -239,9 +256,11 @@ class Mesh:
             if not show_solution:
                 plt.scatter(x, y, c="b" if internal else "y")
             else:
-                color = self.p[index]
-                plt.scatter(x, y, c=color, s = (self.dx) * 720, marker="s", cmap="jet")
+                norm = (self.p - self.p.min()) / (self.p.max() - self.p.min())
+                color = norm.reshape(self.nx, self.ny)
+                plt.scatter(x, y, c = color, cmap = plt.get_cmap('jet'))  
                 plt.colorbar()
+
             if show_coordinates:
                 plt.annotate("i: " + str(i), (x, y + off))
                 plt.annotate("j: " + str(j), (x, y + off/2))
@@ -294,8 +313,9 @@ class Mesh:
             if not show_solution:
                 ax.scatter(x, y, z, c="r" if internal else "g")
             else:
-                color = self.p[index]
-                ax.scatter(x, y, z, c=color, s = (self.dx) * 720, marker = "s", cmap = "jet")
+                norm = (self.p - self.p.min()) / (self.p.max() - self.p.min())
+                color = norm.reshape(self.nx, self.ny, self.nz)
+                ax.scatter(x, y, z, c=color, cmap = "jet")
                 fig.colorbar(plt.cm.ScalarMappable(cmap="jet"), ax=ax)
             if show_coordinates:
                 ax.text(x, y, z + off, "i: " + str(i))
@@ -524,8 +544,8 @@ class Mesh:
             j = (index // self.nx) % self.ny
             k = (index // self.nx // self.ny)
             return np.array([(i + 1/2) * self.dx, (j + 1/2) * self.dy, k * self.dz])
-            
-        return np.array([x, y, z])
+
+
 
     def _get_vol_index_from_coords(self, coords):
         """
@@ -688,9 +708,9 @@ class Mesh:
 
 def main():
     np.set_printoptions(suppress=True)
-    (nx, dx) = (3, 1)
-    (ny, dy) = (3, 1)
-    (nz, dz) = (3, 1)
+    (nx, dx) = (20, 1)
+    (ny, dy) = (20, 1)
+    (nz, dz) = (20, 1)
 
     mesh1d = Mesh()
     mesh1d.assemble_mesh([(nx, dx)])
@@ -702,33 +722,34 @@ def main():
     mesh3d.assemble_mesh([(nx, dx), (ny, dy), (nz, dz)])
 
     K1d = np.array([[[1. for i in range (mesh1d.nx)]]])
-    K1d[0,0,2:] = 1000
-
-    K2d = np.array([[[1. for i in range(mesh2d.nx)] for j in range(mesh2d.ny)]])
-    np.fill_diagonal(K2d[0], 1/1000)
-
-    K3d = np.array([[[1for i in range(mesh3d.nx)] for j in range(mesh3d.ny)] for k in range(mesh3d.nz)])
+    K1d = np.random.uniform(1, 1000, size=(1, 1, mesh1d.nx))
     
+    K2d = np.array([[[1. for i in range(mesh2d.nx)] for j in range(mesh2d.ny)]])
+    K2d = np.random.uniform(1, 1000, size=(1, mesh2d.ny, mesh2d.nx))
+
+    K3d = np.array([[[1. for i in range(mesh3d.nx)] for j in range(mesh3d.ny)] for k in range(mesh3d.nz)])
+    K3d = np.random.uniform(1, 1000, size=(mesh3d.nz, mesh3d.ny, mesh3d.nx))
+
     mesh1d.assemble_faces_transmissibilities(K1d)
-    mesh1d.assemble_tpfa_matrix()
+    mesh1d.assemble_tpfa_matrix(dense = True)
 
     mesh2d.assemble_faces_transmissibilities(K2d)
-    mesh2d.assemble_tpfa_matrix()
+    mesh2d.assemble_tpfa_matrix(dense = True)
 
     mesh3d.assemble_faces_transmissibilities(K3d)
-    mesh3d.assemble_tpfa_matrix()
+    mesh3d.assemble_tpfa_matrix(dense = True)
     
-    
-    f1d = lambda x, y, z: 1
+    g = 10
+    #f1d = lambda x, y, z : (x == mesh1d.dx/2) * 1
+    f1d = lambda x, y, z: (x == mesh1d.dx/2) * g + (x == mesh1d.dx * (mesh1d.nx - 1/2)) * 2 * g
     q1d = np.zeros(mesh1d.nvols)
     mesh1d.set_boundary_conditions("dirichlet", q1d, f1d)
-
-    f2d = lambda x, y, z: 1
+    
+    f2d = lambda x, y, z: (x == mesh2d.dx/2) * g + (x == mesh2d.dx * (mesh2d.nx - 1/2)) * 2 * g + (y == mesh2d.dy/2) * g + (y == mesh2d.dy * (mesh2d.ny - 1/2)) * 3 * g
     q2d = np.zeros(mesh2d.nvols)
     mesh2d.set_boundary_conditions("dirichlet", q2d, f2d)
-    mesh2d.set_boundary_conditions("neumann", q2d, f2d)
     
-    f3d = lambda x, y, z: 1
+    f3d = lambda x, y, z: (x == mesh3d.dx/2) * g + (x == mesh3d.dx * (mesh3d.nx - 1/2)) * -g + (y == mesh3d.dy/2) * g + (y == mesh3d.dy * (mesh3d.ny - 1/2)) * 2 * g + (z == mesh3d.dz/2) * g + (z == mesh3d.dz * (mesh3d.nz - 1/2)) * 3 * g
     q3d = np.zeros(mesh3d.nvols)
     mesh3d.set_boundary_conditions("dirichlet", q3d, f3d)
 
@@ -738,7 +759,7 @@ def main():
 
     options = (show_coordinates, show_volumes, 
                show_faces, show_adjacents, 
-               show_transmissibilities, show_A, show_solution) = (False, True, True, False, False, True, True)
+               show_transmissibilities, show_A, show_solution) = (False, True, False, False, False, False, True)
     
     mesh1d.plot(options)
     mesh2d.plot(options)
