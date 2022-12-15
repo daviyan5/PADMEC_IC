@@ -1,8 +1,13 @@
 import numpy as np
+import cupy as cp
 import matplotlib.pyplot as plt
 from scipy.sparse import csr_matrix
 from scipy.sparse.linalg import spsolve
+from scipy.sparse import SparseEfficiencyWarning
+
 import time
+import warnings
+
 
 class Node:
    def __init__(self, type_node, internal, index, i = 0, j = 0, k = 0, x = 0, y = 0, z = 0):
@@ -55,6 +60,8 @@ class Mesh:
             Lista de nós do tipo face
 
         """
+        warnings.filterwarnings("ignore", category=SparseEfficiencyWarning)
+        self.name = None
 
         self.axis_attibutes = None
         self.dimension = None
@@ -72,7 +79,7 @@ class Mesh:
         self.A = None
         self.p = None
     
-    def assemble_mesh(self, axis_attibutes):
+    def assemble_mesh(self, axis_attibutes, name = "Mesh " + str(np.random.randint(0, 1000))):
         """
         Monta a malha de acordo com os atributos passados
 
@@ -87,6 +94,7 @@ class Mesh:
 
         """
         start_time = time.time()
+        self.name = name
 
         self.axis_attibutes = axis_attibutes
         self.dimension = len(axis_attibutes)
@@ -118,11 +126,11 @@ class Mesh:
     
         start_quick_time = time.time()
         self._assemble_adjacents_quick()
-        print("Time required to assemble adjs: ", round(time.time() - start_quick_time, 5), "s")
+        print("Time to assemble adjs in mesh {}: \t\t".format(self.name), round(time.time() - start_quick_time, 5), "s")
 
         assert self.faces_adjacents.shape == (self.nfaces, 2)
 
-        print("Time required to assemble mesh: ", round(time.time() - start_time, 5), "s")
+        print("Time to assemble mesh {}: \t\t\t".format(self.name), round(time.time() - start_time, 5), "s")
     
 
     def assemble_faces_transmissibilities(self, K):
@@ -152,7 +160,7 @@ class Mesh:
         self.faces_trans = np.hstack((faces_trans_h, faces_trans_l, faces_trans_w))
         self.faces_trans = np.hstack((-self.faces_trans, -self.faces_trans))
 
-        print("Time required to assemble faces transmissibilities: ", round(time.time() - start_time, 5), "s")
+        print("Time to assemble faces T in mesh {}: \t\t".format(self.name), round(time.time() - start_time, 5), "s")
         
     def assemble_tpfa_matrix(self, dense = False):
         """
@@ -166,6 +174,7 @@ class Mesh:
         row_index = np.hstack((row_index_p, col_index_p))
         col_index = np.hstack((col_index_p, row_index_p))
 
+        
         assert len(row_index) == len(col_index)
         assert len(row_index) == 2 * self.nfaces
         assert len(row_index) == len(self.faces_trans)
@@ -178,7 +187,7 @@ class Mesh:
         else:
             self.A.setdiag(0)
             self.A.setdiag(-self.A.sum(axis=1))
-        print("Time required to assemble TPFA matrix: ", round(time.time() - start_time, 5), "s")
+        print("Time to assemble TPFA matrix in mesh {}: \t".format(self.name), round(time.time() - start_time, 5), "s")
 
     def plot(self, options = None):
         """
@@ -226,13 +235,14 @@ class Mesh:
         if type(self.A) == np.matrix:
             self.p = np.linalg.solve(self.A, q)
         elif type(self.A) == csr_matrix:
+            self.A.eliminate_zeros()
             self.p = spsolve(self.A, q)
 
         #print(self.p)
         #print(np.around(self.A.todense(), 1))
         #print(q)
         assert np.allclose(self.A.dot(self.p), q)
-        print("Time required to solve TPFA system: ", round(time.time() - start_time, 5), "s")
+        print("Time to solve TPFA system in mesh {}: \t\t".format(self.name), round(time.time() - start_time, 5), "s")
 
     def _plot_2d(self, options):
         """
@@ -285,12 +295,12 @@ class Mesh:
         
         ax.set_xlabel("x")
         ax.set_ylabel("y")
-        ax.set_title("Malha {}D".format(self.dimension))
+        ax.set_title("Malha {}".format(self.name))
         ax.grid()
         plt.show()
 
         if show_A:
-            print("Matriz de transmissibilidade:\n\n", np.around(self.A.todense(),4), "\n")
+            print("Matriz de transmissibilidade:\n\n", np.around(self.A,4), "\n")
 
     def _plot_3d(self, options):
         """
@@ -347,12 +357,12 @@ class Mesh:
         ax.set_xlabel("x")
         ax.set_ylabel("y")
         ax.set_zlabel("z")
-        ax.set_title("Malha {}D".format(self.dimension))
+        ax.set_title("Malha {}".format(self.name))
         ax.grid()
         plt.show()
 
         if show_A:
-            print("Matriz de transmissibilidade:\n\n", np.around(self.A.todense(),4), "\n")
+            print("Matriz de transmissibilidade:\n\n", np.around(self.A,4), "\n")
             
     def volumes(self):
         """
@@ -560,10 +570,10 @@ class Mesh:
         """
         Retorna o volume que contém o ponto (x, y, z) ou o índice index
         """
-        if type(info) == tuple:
+        if type(info) == tuple or type(info) == np.ndarray:
             x, y, z = info
             index = None
-        elif type(info) == int:
+        elif type(info) == int or type(info) == np.int64:
             index = info
             x, y, z = None, None, None
         else:
@@ -608,7 +618,7 @@ class Mesh:
                 face = Node("hface", self._is_internal_node(i, j, k, "hface"), index, 
                             i, j, k, i * self.dx, (j + 1/2) * self.dy, (k + 1/2) * self.dz)
                 return face
-            elif index < self.nhfaces + self.nvfaces:
+            elif index < self.nhfaces + self.nlfaces:
                 index -= self.nhfaces
                 i = index % self.nx
                 j = int(index / self.nx) % (self.ny + 1)
@@ -617,12 +627,12 @@ class Mesh:
                 face = Node("lface", self._is_internal_node(i, j, k, "vface"), index, 
                             i, j, k, (i + 1/2) * self.dx, j * self.dy, (k + 1/2) * self.dz)
                 return face
-            elif index < self.nhfaces + self.nvfaces + self.nwfaces:
-                index -= (self.nhfaces + self.nvfaces)
+            elif index < self.nhfaces + self.nlfaces + self.nwfaces:
+                index -= (self.nhfaces + self.nlfaces)
                 i = index % self.nx
                 j = int(index / self.nx) % self.ny
                 k = int(index / self.nx / self.ny)
-                index += (self.nhfaces + self.nvfaces)
+                index += (self.nhfaces + self.nlfaces)
                 face = Node("wface", self._is_internal_node(i, j, k, "wface"), index, 
                             i, j, k, (i + 1/2) * self.dx, (j + 1/2) * self.dy, k * self.dz)
                 return face
@@ -708,18 +718,18 @@ class Mesh:
 
 def main():
     np.set_printoptions(suppress=True)
-    (nx, dx) = (20, 1)
-    (ny, dy) = (20, 1)
-    (nz, dz) = (20, 1)
+    (nx, dx) = (30, 0.1)
+    (ny, dy) = (30, 0.3)
+    (nz, dz) = (30, 0.5)
 
     mesh1d = Mesh()
-    mesh1d.assemble_mesh([(nx, dx)])
+    mesh1d.assemble_mesh([(nx, dx)], name="1D")
     
     mesh2d = Mesh()
-    mesh2d.assemble_mesh([(nx, dx), (ny, dy)])
+    mesh2d.assemble_mesh([(nx, dx), (ny, dy)], name="2D")
     
     mesh3d = Mesh()
-    mesh3d.assemble_mesh([(nx, dx), (ny, dy), (nz, dz)])
+    mesh3d.assemble_mesh([(nx, dx), (ny, dy), (nz, dz)], name="3D")
 
     K1d = np.array([[[1. for i in range (mesh1d.nx)]]])
     K1d = np.random.uniform(1, 1000, size=(1, 1, mesh1d.nx))
@@ -730,14 +740,15 @@ def main():
     K3d = np.array([[[1. for i in range(mesh3d.nx)] for j in range(mesh3d.ny)] for k in range(mesh3d.nz)])
     K3d = np.random.uniform(1, 1000, size=(mesh3d.nz, mesh3d.ny, mesh3d.nx))
 
+    dense = False
     mesh1d.assemble_faces_transmissibilities(K1d)
-    mesh1d.assemble_tpfa_matrix(dense = True)
+    mesh1d.assemble_tpfa_matrix(dense)
 
     mesh2d.assemble_faces_transmissibilities(K2d)
-    mesh2d.assemble_tpfa_matrix(dense = True)
+    mesh2d.assemble_tpfa_matrix(dense)
 
     mesh3d.assemble_faces_transmissibilities(K3d)
-    mesh3d.assemble_tpfa_matrix(dense = True)
+    mesh3d.assemble_tpfa_matrix(dense)
     
     g = 10
     #f1d = lambda x, y, z : (x == mesh1d.dx/2) * 1
@@ -757,9 +768,15 @@ def main():
     mesh2d.solve_tpfa(q2d)
     mesh3d.solve_tpfa(q3d)
 
-    options = (show_coordinates, show_volumes, 
-               show_faces, show_adjacents, 
-               show_transmissibilities, show_A, show_solution) = (False, True, False, False, False, False, True)
+    show_coordinates = False
+    show_volumes = True
+    show_faces = False
+    show_adjacents = False
+    show_transmissibilities = False
+    show_A = False
+    show_solution = True
+
+    options = (show_coordinates, show_volumes, show_faces, show_adjacents, show_transmissibilities, show_A, show_solution)
     
     mesh1d.plot(options)
     mesh2d.plot(options)
