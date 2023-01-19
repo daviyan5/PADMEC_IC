@@ -715,6 +715,14 @@ class Mesh:
         elif(self.dimension == 3):
             return self.nx * self.ny * (self.nz + 1) + self.nx * (self.ny + 1) * self.nz + (self.nx + 1) * self.ny * self.nz
 
+def get_random_tensor(a, b, size):
+    """
+    Retorna um array de tamanho size cujos elementos são tensores aleatórios diagonais 3 x 3, com valores entre a e b
+
+    """
+    diags = np.random.uniform(a, b, (size, 3))
+    return np.apply_along_axis(np.diag, 1, diags)
+    
 
 def main():
     np.set_printoptions(suppress=True)
@@ -731,14 +739,18 @@ def main():
     mesh3d = Mesh()
     mesh3d.assemble_mesh([(nx, dx), (ny, dy), (nz, dz)], name="3D")
 
-    K1d = np.array([[[1. for i in range (mesh1d.nx)]]])
-    K1d = np.random.uniform(1, 1000, size=(1, 1, mesh1d.nx))
+    Kxx = 1.
+    Kyy = 1.
+    Kzz = 1.
+    K_tensor = np.array([[Kxx, 0., 0.], [0., Kyy, 0.], [0., 0., Kzz]])
+    K1d = np.array([[[K_tensor for i in range (mesh1d.nx)]]])
+    K1d = get_random_tensor(1, 1000, size=(1, 1, mesh1d.nx))
     
     K2d = np.array([[[1. for i in range(mesh2d.nx)] for j in range(mesh2d.ny)]])
-    K2d = np.random.uniform(1, 1000, size=(1, mesh2d.ny, mesh2d.nx))
+    K2d = get_random_tensor(1, 1000, size=(1, mesh2d.ny, mesh2d.nx))
 
     K3d = np.array([[[1. for i in range(mesh3d.nx)] for j in range(mesh3d.ny)] for k in range(mesh3d.nz)])
-    K3d = np.random.uniform(1, 1000, size=(mesh3d.nz, mesh3d.ny, mesh3d.nx))
+    K3d = get_random_tensor(1, 1000, size=(mesh3d.nz, mesh3d.ny, mesh3d.nx))
 
     dense = False
     mesh1d.assemble_faces_transmissibilities(K1d)
