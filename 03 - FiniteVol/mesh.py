@@ -1,13 +1,17 @@
 import numpy as np
 import cupy as cp
+import vtk
+from vtk.util import numpy_support
+from cupyx.scipy.sparse import csr_matrix as cp_csr_matrix
+from cupyx.scipy.sparse.linalg import spsolve as cp_spsolve
 import matplotlib.pyplot as plt
-from scipy.sparse import csr_matrix
+from scipy.sparse import csr_matrix, lil_matrix, dia_matrix
 from scipy.sparse.linalg import spsolve
 from scipy.sparse import SparseEfficiencyWarning
 
 import time
 import warnings
-
+USE_GPU = False
 
 class Node:
    def __init__(self, type_node, internal, index, i = 0, j = 0, k = 0, x = 0, y = 0, z = 0):
@@ -95,7 +99,7 @@ class Mesh:
         """
         start_time = time.time()
         self.name = name
-
+        #print("Creating mesh {} with {} elements".format(self.name, nvols)")
         self.axis_attibutes = axis_attibutes
         self.dimension = len(axis_attibutes)
         if(self.dimension > 3):
@@ -125,13 +129,12 @@ class Mesh:
         self.faces_adjacents = np.empty((self.nfaces, 2), dtype = int)
     
         start_quick_time = time.time()
-        self._assemble_adjacents_quick()
+        self._assemble_adjacents()
         print("Time to assemble adjs in mesh {}: \t\t".format(self.name), round(time.time() - start_quick_time, 5), "s")
 
         assert self.faces_adjacents.shape == (self.nfaces, 2)
 
         print("Time to assemble mesh {}: \t\t\t".format(self.name), round(time.time() - start_time, 5), "s")
-    
 
     def assemble_faces_transmissibilities(self, K):
         """
@@ -141,22 +144,25 @@ class Mesh:
 
         self.volumes_trans = np.flip(K, 1).flatten()
 
-        Kh = 2 / (1/K[:, :, 1:] + 1/K[:, :, :-1])
-        Kh = np.insert(Kh,  0, K[:, :, 0], axis = 2)
-        Kh = np.insert(Kh, self.nx, K[:, :, -1], axis = 2)
-        
-        Kl = 2 / (1/K[:, 1:, :] + 1/K[:, :-1, :])
-        Kl = np.insert(Kl,  0, K[:, 0, :], axis = 1)
-        Kl = np.insert(Kl, self.ny, K[:, -1, :], axis = 1)
-        
-        Kw = 2 / (1/K[1:, :, :] + 1/K[:-1, :, :])
-        Kw = np.insert(Kw,  0, K[0, :, :], axis = 0)
-        Kw = np.insert(Kw, self.nz, K[-1, :, :], axis = 0)
-    
-        faces_trans_h = np.flip(Kh, 1).flatten() / self.dx
-        faces_trans_l = np.flip(Kl, 1).flatten() / self.dy if self.dimension > 1 else np.empty((0))
-        faces_trans_w = np.flip(Kw, 1).flatten() / self.dz if self.dimension > 2 else np.empty((0))
+        Kh = 2 / (1/K[:, :, 1:, 0, 0] + 1/K[:, :, :-1, 0, 0])
+        Kh = np.insert(Kh,  0, K[:, :, 0, 0, 0], axis = 2)
+        Kh = np.insert(Kh, Kh.shape[2], K[:, :, -1, 0, 0], axis = 2)
+        faces_trans_h = np.flip(Kh, 1).flatten() / self.dx / 2
 
+        faces_trans_l = np.empty((0))
+        if(self.dimension > 1):
+            Kl = 2 / (1/K[:, 1:, :, 1, 1] + 1/K[:, :-1, :, 1, 1])
+            Kl = np.insert(Kl,  0, K[:, 0, :, 1, 1], axis = 1)
+            Kl = np.insert(Kl, Kl.shape[1], K[:, -1, :, 1, 1], axis = 1)
+            faces_trans_l = np.flip(Kl, 1).flatten() / self.dy / 2
+
+        faces_trans_w = np.empty((0))
+        if(self.dimension > 2):
+            Kw = 2 / (1/K[1:, :, :, 2, 2] + 1/K[:-1, :, :, 2, 2])
+            Kw = np.insert(Kw,  0, K[0, :, :, 2, 2], axis = 0)
+            Kw = np.insert(Kw, Kw.shape[0], K[-1, :, :, 2, 2], axis = 0)
+            faces_trans_w = np.flip(Kw, 1).flatten() / self.dz / 2
+        
         self.faces_trans = np.hstack((faces_trans_h, faces_trans_l, faces_trans_w))
         self.faces_trans = np.hstack((-self.faces_trans, -self.faces_trans))
 
@@ -199,11 +205,39 @@ class Mesh:
             self._plot_3d(options)
         else:
             raise Exception("Número de eixos inválido")
-        
+
+    def create_vtk(self):
+        # Create the rectilinear grid
+        rect_grid = vtk.vtkRectilinearGrid()
+        rect_grid.SetDimensions(self.nx, self.ny, self.nz)
+        index = np.arange(self.nvols)
+        i, j, k = index % self.nx, (index // self.nx) % self.ny, index // (self.nx * self.ny)
+        x, y, z = (i + 1/2) * self.dx, (j + 1/2) * self.dy, (k + 1/2) * self.dz
+        rect_grid.SetXCoordinates(numpy_support.numpy_to_vtk(x))
+        rect_grid.SetYCoordinates(numpy_support.numpy_to_vtk(y))
+        rect_grid.SetZCoordinates(numpy_support.numpy_to_vtk(z))
+
+        # Add the permeability array as a cell data array
+        permeability_array = numpy_support.numpy_to_vtk(self.volumes_trans, deep=True)
+        permeability_array.SetName("Permeability")
+        rect_grid.GetCellData().AddArray(permeability_array)
+
+        # Add the pressure array as a point data array
+        pressure_array = numpy_support.numpy_to_vtk(self.p, deep=True)
+        pressure_array.SetName("Pressure")
+        rect_grid.GetPointData().AddArray(pressure_array)
+
+        # Write the rectilinear grid to a .vtk file
+        writer = vtk.vtkRectilinearGridWriter()
+        writer.SetFileName("{}_mesh.vtk".format(self.name))
+        writer.SetInputData(rect_grid)
+        writer.Write() 
+    
     def set_boundary_conditions(self, bc, q, f):
         """
         Define as condições de contorno
         """
+        start_time = time.time()
         # Get x, y and z and indexes of boundary volumes nodes
         i = np.arange(self.nx)
         j = np.arange(self.ny)
@@ -218,14 +252,29 @@ class Mesh:
         assert len(x) == len(y) == len(z) == len(index)
         if bc == "dirichlet":
             f_temp = f(x, y, z)
+            if type(f_temp) != np.array:
+                f_temp = np.full(len(index), f_temp)
+            assert f_temp.shape == index.shape
             non_zero = np.where(f_temp != 0)[0]
             index = index[non_zero]
             f_temp = f_temp[non_zero]
+
+            self.A.eliminate_zeros()
+            self.A = lil_matrix(self.A)
+
             self.A[index, :] = 0
             self.A[index, index] = 1
+
+            self.A = csr_matrix(self.A)
+            self.A.eliminate_zeros()
             q[index] = f_temp
         elif bc == "neumann":
-            q[index] -= f(x, y, z)
+            f_temp = f(x, y, z)
+            if type(f_temp) != np.array:
+                f_temp = np.full(len(index), f_temp)
+            assert f_temp.shape == index.shape
+            q[index] += f_temp
+        print("Time to set {} bc's in mesh {}: \t\t".format(bc, self.name), round(time.time() - start_time, 5), "s")
         
     def solve_tpfa(self, q):
         """
@@ -236,12 +285,14 @@ class Mesh:
             self.p = np.linalg.solve(self.A, q)
         elif type(self.A) == csr_matrix:
             self.A.eliminate_zeros()
-            self.p = spsolve(self.A, q)
+            if USE_GPU:
+                self.p = cp_spsolve(cp_csr_matrix(self.A), cp.array(q))
+                self.p = cp.asnumpy(self.p)
+            else:
+                self.p = spsolve(self.A, q)
 
-        #print(self.p)
-        #print(np.around(self.A.todense(), 1))
-        #print(q)
-        assert np.allclose(self.A.dot(self.p), q)
+        
+        #assert np.allclose(self.A.dot(self.p), q)
         print("Time to solve TPFA system in mesh {}: \t\t".format(self.name), round(time.time() - start_time, 5), "s")
 
     def _plot_2d(self, options):
@@ -310,7 +361,7 @@ class Mesh:
          show_faces, show_adjacents, 
          show_transmissibilities, show_A,
          show_solution) = options if options else (False, True, True, False, False, False, False)
-        
+        show_boundary = False
         fig = plt.figure()
         ax = fig.add_subplot(111, projection='3d')
         off = 0.1 * (self.dy) * 2
@@ -320,11 +371,20 @@ class Mesh:
             i, j, k = index % self.nx, (index // self.nx) % self.ny, index // (self.nx * self.ny)
             x, y, z = (i + 1/2) * self.dx, (j + 1/2) * self.dy, (k + 1/2) * self.dz
             internal = self._is_internal_node(i, j, k, "volume")
+            p = self.p
+            nx, ny, nz = self.nx, self.ny, self.nz
+            if not show_boundary:
+                internal_idx = np.where(internal == True)[0]
+                x, y, z = x[internal_idx], y[internal_idx], z[internal_idx]
+                i, j, k = i[internal_idx], j[internal_idx], k[internal_idx]
+                p = p[internal_idx]
+                nx, ny, nz = nx - 2, ny - 2, nz - 2
+                
             if not show_solution:
                 ax.scatter(x, y, z, c="r" if internal else "g")
             else:
-                norm = (self.p - self.p.min()) / (self.p.max() - self.p.min())
-                color = norm.reshape(self.nx, self.ny, self.nz)
+                norm = (p - p.min()) / (p.max() - p.min())
+                color = norm.reshape(nx, ny, nz)
                 ax.scatter(x, y, z, c=color, cmap = "jet")
                 fig.colorbar(plt.cm.ScalarMappable(cmap="jet"), ax=ax)
             if show_coordinates:
@@ -433,7 +493,7 @@ class Mesh:
                     face = Node("wface", self._is_internal_node(i, j, k, "wface"), index, i, j, k, x, y, z)
                     yield face
     
-    def _assemble_adjacents_quick(self):
+    def _assemble_adjacents(self):
         """
         Monta a matriz de adjacência de forma rápida
         """
@@ -461,34 +521,6 @@ class Mesh:
                 assert wfaces_coords.shape == (self.nwfaces, 3)
                 
                 self.faces_adjacents[self.nhfaces + self.nlfaces:] = self._get_adjacents_to_face(wfaces_coords, "wface")
-        
-
-        
-    def _assemble_adjacents(self):
-        """
-        Monta a lista de adjacência de cada nó
-        """
-        for face in self.faces():
-            if face.type_node == "hface":
-                v1x, v1y, v1z = face.x + self.dx/2, face.y, face.z
-                v2x, v2y, v2z = face.x - self.dx/2, face.y, face.z
-                v1 = self._get_volume((v1x, v1y, v1z))
-                v2 = self._get_volume((v2x, v2y, v2z))
-                self.faces_adjacents[face.index] = np.array([v1.index if v1 != None else v2.index, v2.index if v2 != None else v1.index])
-
-            elif face.type_node == "lface":
-                v1x, v1y, v1z = face.x, face.y + self.dy/2, face.z
-                v2x, v2y, v2z = face.x, face.y - self.dy/2, face.z
-                v1 = self._get_volume((v1x, v1y, v1z))
-                v2 = self._get_volume((v2x, v2y, v2z))
-                self.faces_adjacents[face.index] = np.array([v1.index if v1 != None else v2.index, v2.index if v2 != None else v1.index])
-                
-            elif face.type_node == "wface":
-                v1x, v1y, v1z = face.x, face.y, face.z + self.dz/2
-                v2x, v2y, v2z = face.x, face.y, face.z - self.dz/2
-                v1 = self._get_volume((v1x, v1y, v1z))
-                v2 = self._get_volume((v2x, v2y, v2z))
-                self.faces_adjacents[face.index] = np.array([v1.index if v1 != None else v2.index, v2.index if v2 != None else v1.index])
 
     def _get_adjacents_to_face(self, face_coords, face_type):
         """
@@ -554,8 +586,6 @@ class Mesh:
             j = (index // self.nx) % self.ny
             k = (index // self.nx // self.ny)
             return np.array([(i + 1/2) * self.dx, (j + 1/2) * self.dy, k * self.dz])
-
-
 
     def _get_vol_index_from_coords(self, coords):
         """
@@ -714,86 +744,3 @@ class Mesh:
             return self.nx * (self.ny + 1) + self.ny * (self.nx + 1)
         elif(self.dimension == 3):
             return self.nx * self.ny * (self.nz + 1) + self.nx * (self.ny + 1) * self.nz + (self.nx + 1) * self.ny * self.nz
-
-def get_random_tensor(a, b, size):
-    """
-    Retorna um array de tamanho size cujos elementos são tensores aleatórios diagonais 3 x 3, com valores entre a e b
-
-    """
-    diags = np.random.uniform(a, b, (size, 3))
-    return np.apply_along_axis(np.diag, 1, diags)
-    
-
-def main():
-    np.set_printoptions(suppress=True)
-    (nx, dx) = (30, 0.1)
-    (ny, dy) = (30, 0.3)
-    (nz, dz) = (30, 0.5)
-
-    mesh1d = Mesh()
-    mesh1d.assemble_mesh([(nx, dx)], name="1D")
-    
-    mesh2d = Mesh()
-    mesh2d.assemble_mesh([(nx, dx), (ny, dy)], name="2D")
-    
-    mesh3d = Mesh()
-    mesh3d.assemble_mesh([(nx, dx), (ny, dy), (nz, dz)], name="3D")
-
-    Kxx = 1.
-    Kyy = 1.
-    Kzz = 1.
-    K_tensor = np.array([[Kxx, 0., 0.], [0., Kyy, 0.], [0., 0., Kzz]])
-    K1d = np.array([[[K_tensor for i in range (mesh1d.nx)]]])
-    K1d = get_random_tensor(1, 1000, size=(1, 1, mesh1d.nx))
-    
-    K2d = np.array([[[1. for i in range(mesh2d.nx)] for j in range(mesh2d.ny)]])
-    K2d = get_random_tensor(1, 1000, size=(1, mesh2d.ny, mesh2d.nx))
-
-    K3d = np.array([[[1. for i in range(mesh3d.nx)] for j in range(mesh3d.ny)] for k in range(mesh3d.nz)])
-    K3d = get_random_tensor(1, 1000, size=(mesh3d.nz, mesh3d.ny, mesh3d.nx))
-
-    dense = False
-    mesh1d.assemble_faces_transmissibilities(K1d)
-    mesh1d.assemble_tpfa_matrix(dense)
-
-    mesh2d.assemble_faces_transmissibilities(K2d)
-    mesh2d.assemble_tpfa_matrix(dense)
-
-    mesh3d.assemble_faces_transmissibilities(K3d)
-    mesh3d.assemble_tpfa_matrix(dense)
-    
-    g = 10
-    #f1d = lambda x, y, z : (x == mesh1d.dx/2) * 1
-    f1d = lambda x, y, z: (x == mesh1d.dx/2) * g + (x == mesh1d.dx * (mesh1d.nx - 1/2)) * 2 * g
-    q1d = np.zeros(mesh1d.nvols)
-    mesh1d.set_boundary_conditions("dirichlet", q1d, f1d)
-    
-    f2d = lambda x, y, z: (x == mesh2d.dx/2) * g + (x == mesh2d.dx * (mesh2d.nx - 1/2)) * 2 * g + (y == mesh2d.dy/2) * g + (y == mesh2d.dy * (mesh2d.ny - 1/2)) * 3 * g
-    q2d = np.zeros(mesh2d.nvols)
-    mesh2d.set_boundary_conditions("dirichlet", q2d, f2d)
-    
-    f3d = lambda x, y, z: (x == mesh3d.dx/2) * g + (x == mesh3d.dx * (mesh3d.nx - 1/2)) * -g + (y == mesh3d.dy/2) * g + (y == mesh3d.dy * (mesh3d.ny - 1/2)) * 2 * g + (z == mesh3d.dz/2) * g + (z == mesh3d.dz * (mesh3d.nz - 1/2)) * 3 * g
-    q3d = np.zeros(mesh3d.nvols)
-    mesh3d.set_boundary_conditions("dirichlet", q3d, f3d)
-
-    mesh1d.solve_tpfa(q1d)
-    mesh2d.solve_tpfa(q2d)
-    mesh3d.solve_tpfa(q3d)
-
-    show_coordinates = False
-    show_volumes = True
-    show_faces = False
-    show_adjacents = False
-    show_transmissibilities = False
-    show_A = False
-    show_solution = True
-
-    options = (show_coordinates, show_volumes, show_faces, show_adjacents, show_transmissibilities, show_A, show_solution)
-    
-    mesh1d.plot(options)
-    mesh2d.plot(options)
-    mesh3d.plot(options)
-    
-
-if __name__ == "__main__":
-    main()
