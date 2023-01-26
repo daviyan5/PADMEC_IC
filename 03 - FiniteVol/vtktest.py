@@ -6,7 +6,7 @@ import random
 # Create a 3x3x3 voxel grid
 grid = vtkData.vtkImageData()
 grid.SetDimensions(3, 3, 3)
-
+grid.SetSpacing(1, 1, 1)
 # Create the "test" attribute array
 testArray = vtkCore.vtkFloatArray()
 testArray.SetName("test")

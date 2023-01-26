@@ -1,10 +1,13 @@
 import numpy as np
 import cupy as cp
 import vtk
+import matplotlib.pyplot as plt
+import pypardiso
+
 from vtk.util import numpy_support
 from cupyx.scipy.sparse import csr_matrix as cp_csr_matrix
 from cupyx.scipy.sparse.linalg import spsolve as cp_spsolve
-import matplotlib.pyplot as plt
+
 from scipy.sparse import csr_matrix, lil_matrix, dia_matrix
 from scipy.sparse.linalg import spsolve
 from scipy.sparse import SparseEfficiencyWarning
@@ -82,6 +85,12 @@ class Mesh:
 
         self.A = None
         self.p = None
+        self.q = None
+
+        self.dirichlet_points = None
+        self.dirichlet_values = None
+        self.neumann_points = None
+        self.neumann_values = None
     
     def assemble_mesh(self, axis_attibutes, name = "Mesh " + str(np.random.randint(0, 1000))):
         """
@@ -142,33 +151,35 @@ class Mesh:
         """
         start_time = time.time()
 
-        self.volumes_trans = np.flip(K, 1).flatten()
+        self.volumes_trans = np.flip(K, 1)
+        self.volumes_trans = (np.trace(self.volumes_trans, axis1=3, axis2=4)/3).flatten()
+    
 
         Kh = 2 / (1/K[:, :, 1:, 0, 0] + 1/K[:, :, :-1, 0, 0])
         Kh = np.insert(Kh,  0, K[:, :, 0, 0, 0], axis = 2)
         Kh = np.insert(Kh, Kh.shape[2], K[:, :, -1, 0, 0], axis = 2)
-        faces_trans_h = np.flip(Kh, 1).flatten() / self.dx / 2
+        faces_trans_h = np.flip(Kh, 1).flatten() / self.dx #/ 2
 
         faces_trans_l = np.empty((0))
         if(self.dimension > 1):
             Kl = 2 / (1/K[:, 1:, :, 1, 1] + 1/K[:, :-1, :, 1, 1])
             Kl = np.insert(Kl,  0, K[:, 0, :, 1, 1], axis = 1)
             Kl = np.insert(Kl, Kl.shape[1], K[:, -1, :, 1, 1], axis = 1)
-            faces_trans_l = np.flip(Kl, 1).flatten() / self.dy / 2
+            faces_trans_l = np.flip(Kl, 1).flatten() / self.dy #/ 2
 
         faces_trans_w = np.empty((0))
         if(self.dimension > 2):
             Kw = 2 / (1/K[1:, :, :, 2, 2] + 1/K[:-1, :, :, 2, 2])
             Kw = np.insert(Kw,  0, K[0, :, :, 2, 2], axis = 0)
             Kw = np.insert(Kw, Kw.shape[0], K[-1, :, :, 2, 2], axis = 0)
-            faces_trans_w = np.flip(Kw, 1).flatten() / self.dz / 2
+            faces_trans_w = np.flip(Kw, 1).flatten() / self.dz #/ 2
         
         self.faces_trans = np.hstack((faces_trans_h, faces_trans_l, faces_trans_w))
         self.faces_trans = np.hstack((-self.faces_trans, -self.faces_trans))
 
         print("Time to assemble faces T in mesh {}: \t\t".format(self.name), round(time.time() - start_time, 5), "s")
         
-    def assemble_tpfa_matrix(self, dense = False):
+    def assemble_tpfa_matrix(self):
         """
         Monta a matriz de transmissibilidade TPFA
         """
@@ -186,13 +197,8 @@ class Mesh:
         assert len(row_index) == len(self.faces_trans)
 
         self.A = csr_matrix((self.faces_trans, (row_index, col_index)), shape=(self.nvols, self.nvols))
-        if dense:
-            self.A = self.A.todense()
-            np.fill_diagonal(self.A, 0)
-            np.fill_diagonal(self.A, -self.A.sum(axis=1))
-        else:
-            self.A.setdiag(0)
-            self.A.setdiag(-self.A.sum(axis=1))
+        self.A.setdiag(0)
+        self.A.setdiag(-self.A.sum(axis=1))
         print("Time to assemble TPFA matrix in mesh {}: \t".format(self.name), round(time.time() - start_time, 5), "s")
 
     def plot(self, options = None):
@@ -208,91 +214,98 @@ class Mesh:
 
     def create_vtk(self):
         # Create the rectilinear grid
-        rect_grid = vtk.vtkRectilinearGrid()
-        rect_grid.SetDimensions(self.nx, self.ny, self.nz)
-        index = np.arange(self.nvols)
-        i, j, k = index % self.nx, (index // self.nx) % self.ny, index // (self.nx * self.ny)
-        x, y, z = (i + 1/2) * self.dx, (j + 1/2) * self.dy, (k + 1/2) * self.dz
-        rect_grid.SetXCoordinates(numpy_support.numpy_to_vtk(x))
-        rect_grid.SetYCoordinates(numpy_support.numpy_to_vtk(y))
-        rect_grid.SetZCoordinates(numpy_support.numpy_to_vtk(z))
-
+        grid = vtk.vtkImageData()
+        grid.SetDimensions(self.nx + 1, self.ny + 1, self.nz + 1)
+        #index = np.arange(self.nvols)
+        #i, j, k = index % self.nx, (index // self.nx) % self.ny, index // (self.nx * self.ny)
+        #x, y, z = (i + 1/2) * self.dx, (j + 1/2) * self.dy, (k + 1/2) * self.dz
+        grid.SetSpacing(self.dx, self.dy, self.dz)
         # Add the permeability array as a cell data array
         permeability_array = numpy_support.numpy_to_vtk(self.volumes_trans, deep=True)
         permeability_array.SetName("Permeability")
-        rect_grid.GetCellData().AddArray(permeability_array)
+        grid.GetCellData().AddArray(permeability_array)
 
         # Add the pressure array as a point data array
-        pressure_array = numpy_support.numpy_to_vtk(self.p, deep=True)
-        pressure_array.SetName("Pressure")
-        rect_grid.GetPointData().AddArray(pressure_array)
+        if(self.p.max() - self.p.min() <= 1e-6):
+            p = self.p
+            if(p.max() == p.min()):
+                norm = np.ones_like(p)
+            else:
+                norm = (p - p.min()) / (p.max() - p.min())
+            pressure_array = numpy_support.numpy_to_vtk(norm, deep=True)
+            pressure_array.SetName("Pressure normalized")
+            grid.GetCellData().AddArray(pressure_array)
+        else:
+            pressure_array = numpy_support.numpy_to_vtk(self.p, deep=True)
+            pressure_array.SetName("Pressure")
+            grid.GetCellData().AddArray(pressure_array)
 
-        # Write the rectilinear grid to a .vtk file
-        writer = vtk.vtkRectilinearGridWriter()
+        # Write the rectilinear grid to a .vtk filea
+        writer = vtk.vtkDataSetWriter()
         writer.SetFileName("{}_mesh.vtk".format(self.name))
-        writer.SetInputData(rect_grid)
+        writer.SetInputData(grid)
         writer.Write() 
     
-    def set_boundary_conditions(self, bc, q, f):
+    def set_boundary_conditions(self, bc, f):
         """
         Define as condições de contorno
         """
+        if(f[0].shape[0] == 0):
+            return
         start_time = time.time()
         # Get x, y and z and indexes of boundary volumes nodes
+        self.q = np.zeros(self.nvols) if self.q is None else self.q
         i = np.arange(self.nx)
         j = np.arange(self.ny)
         k = np.arange(self.nz)
         i, j, k = np.meshgrid(i, j, k, indexing="ij")
         internal = self._is_internal_node(i, j, k, "volume").flatten()
         
-        index = np.where(internal == False)[0]
-        x = (index % self.nx + 1/2) * self.dx
-        y = ((index // self.nx) % self.ny + 1/2) * self.dy
-        z = (index // (self.nx * self.ny) + 1/2) * self.dz
-        assert len(x) == len(y) == len(z) == len(index)
+
         if bc == "dirichlet":
-            f_temp = f(x, y, z)
-            if type(f_temp) != np.array:
-                f_temp = np.full(len(index), f_temp)
-            assert f_temp.shape == index.shape
-            non_zero = np.where(f_temp != 0)[0]
-            index = index[non_zero]
-            f_temp = f_temp[non_zero]
-
+            self.dirichlet_points = f[0]
+            self.dirichlet_values = f[1]
+            
+            # Get indexes of boundary volumes points (x,y,z) -> index
+            indexes = self._get_vol_index_from_coords(coords = (f[0][:, 0], f[0][:, 1], f[0][:, 2]))
+            for i in indexes:
+                self.A.data[self.A.indptr[i] : self.A.indptr[i + 1]] = 0.
+            self.A[indexes, indexes] = 1.
+            
             self.A.eliminate_zeros()
-            self.A = lil_matrix(self.A)
+            self.q[indexes] = self.dirichlet_values
 
-            self.A[index, :] = 0
-            self.A[index, index] = 1
-
-            self.A = csr_matrix(self.A)
-            self.A.eliminate_zeros()
-            q[index] = f_temp
         elif bc == "neumann":
-            f_temp = f(x, y, z)
-            if type(f_temp) != np.array:
-                f_temp = np.full(len(index), f_temp)
-            assert f_temp.shape == index.shape
-            q[index] += f_temp
+            self.neumann_points = f[0]
+            self.neumann_values = f[1]
+
+            # Get indexes of boundary volumes points (x,y,z) -> index
+            indexes = self._get_vol_index_from_coords(coords = (f[0][:, 0], f[0][:, 1], f[0][:, 2]))
+
+            self.q[indexes] += self.neumann_values
+
         print("Time to set {} bc's in mesh {}: \t\t".format(bc, self.name), round(time.time() - start_time, 5), "s")
         
-    def solve_tpfa(self, q):
+    def solve_tpfa(self, dense = False):
         """
         Resolve o sistema linear da malha
         """
         start_time = time.time()
-        if type(self.A) == np.matrix:
-            self.p = np.linalg.solve(self.A, q)
-        elif type(self.A) == csr_matrix:
-            self.A.eliminate_zeros()
+        # Check if there's no intersection between dirichlet and neumann points
+        if dense:
+            self.A = self.A.todense()
+            self.p = np.linalg.solve(self.A, self.q)
+        else:
+            self.p = np.zeros(self.nvols)
             if USE_GPU:
-                self.p = cp_spsolve(cp_csr_matrix(self.A), cp.array(q))
+                self.p = cp_spsolve(cp_csr_matrix(self.A), cp.array(self.q))
                 self.p = cp.asnumpy(self.p)
             else:
-                self.p = spsolve(self.A, q)
-
-        
-        #assert np.allclose(self.A.dot(self.p), q)
+                self.p = pypardiso.spsolve(self.A, self.q)
+        #print(np.around(self.A.todense(), 3))
+        #print(np.around(self.q, 3))
+        #print(np.around(self.p, 3))
+        assert np.allclose(self.A.dot(self.p), self.q)
         print("Time to solve TPFA system in mesh {}: \t\t".format(self.name), round(time.time() - start_time, 5), "s")
 
     def _plot_2d(self, options):
@@ -301,7 +314,7 @@ class Mesh:
         """
         (show_coordinates, show_volumes, 
          show_faces, show_adjacents, 
-         show_transmissibilities, show_A,
+         show_transmissibilities, print_matrices,
          show_solution) = options if options else (False, True, True, False, False, False, False)
 
         off = 0.1 * (self.dy) * (0.06 if self.dimension == 1 else 2)
@@ -314,10 +327,15 @@ class Mesh:
             i = index % self.nx
             j = (index // self.nx) % self.ny
             internal = self._is_internal_node(i, j, 0, "volume")
+            p = self.p
+            
             if not show_solution:
                 plt.scatter(x, y, c="b" if internal else "y")
             else:
-                norm = (self.p - self.p.min()) / (self.p.max() - self.p.min())
+                if(p.max() == p.min()):
+                    norm = np.ones_like(p)
+                else:
+                    norm = (p - p.min()) / (p.max() - p.min())
                 color = norm.reshape(self.nx, self.ny)
                 plt.scatter(x, y, c = color, cmap = plt.get_cmap('jet'))  
                 plt.colorbar()
@@ -350,8 +368,9 @@ class Mesh:
         ax.grid()
         plt.show()
 
-        if show_A:
+        if print_matrices:
             print("Matriz de transmissibilidade:\n\n", np.around(self.A,4), "\n")
+            print("Pressão:\n\n", np.around(self.p,4), "\n")
 
     def _plot_3d(self, options):
         """
@@ -359,9 +378,10 @@ class Mesh:
         """
         (show_coordinates, show_volumes, 
          show_faces, show_adjacents, 
-         show_transmissibilities, show_A,
+         show_transmissibilities, print_matrices,
          show_solution) = options if options else (False, True, True, False, False, False, False)
-        show_boundary = False
+        
+        show_boundary = True if show_volumes else True
         fig = plt.figure()
         ax = fig.add_subplot(111, projection='3d')
         off = 0.1 * (self.dy) * 2
@@ -373,17 +393,19 @@ class Mesh:
             internal = self._is_internal_node(i, j, k, "volume")
             p = self.p
             nx, ny, nz = self.nx, self.ny, self.nz
-            if not show_boundary:
+            if not show_boundary and self.nx > 2 and self.ny > 2 and self.nz > 2:
                 internal_idx = np.where(internal == True)[0]
                 x, y, z = x[internal_idx], y[internal_idx], z[internal_idx]
                 i, j, k = i[internal_idx], j[internal_idx], k[internal_idx]
                 p = p[internal_idx]
                 nx, ny, nz = nx - 2, ny - 2, nz - 2
-                
             if not show_solution:
                 ax.scatter(x, y, z, c="r" if internal else "g")
             else:
-                norm = (p - p.min()) / (p.max() - p.min())
+                if(p.max() == p.min()):
+                    norm = np.ones_like(p)
+                else:
+                    norm = (p - p.min()) / (p.max() - p.min())
                 color = norm.reshape(nx, ny, nz)
                 ax.scatter(x, y, z, c=color, cmap = "jet")
                 fig.colorbar(plt.cm.ScalarMappable(cmap="jet"), ax=ax)
@@ -421,8 +443,9 @@ class Mesh:
         ax.grid()
         plt.show()
 
-        if show_A:
+        if print_matrices:
             print("Matriz de transmissibilidade:\n\n", np.around(self.A,4), "\n")
+            print("Pressão:\n\n", np.around(self.p,4), "\n")
             
     def volumes(self):
         """
@@ -594,7 +617,7 @@ class Mesh:
         i = coords[0] // self.dx
         j = coords[1] // self.dy
         k = coords[2] // self.dz
-        return  i + j * self.nx + k * self.nx * self.ny
+        return  (i + j * self.nx + k * self.nx * self.ny).astype(int)
         
     def _get_volume(self, info):
         """
