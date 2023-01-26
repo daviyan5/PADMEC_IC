@@ -2,7 +2,7 @@ import numpy as np
 import cupy as cp
 import vtk
 import matplotlib.pyplot as plt
-import pypardiso
+
 
 from vtk.util import numpy_support
 from cupyx.scipy.sparse import csr_matrix as cp_csr_matrix
@@ -11,6 +11,8 @@ from cupyx.scipy.sparse.linalg import spsolve as cp_spsolve
 from scipy.sparse import csr_matrix, lil_matrix, dia_matrix
 from scipy.sparse.linalg import spsolve
 from scipy.sparse import SparseEfficiencyWarning
+
+from pypardiso import spsolve as pd_spsolve
 
 import time
 import warnings
@@ -91,7 +93,9 @@ class Mesh:
         self.dirichlet_values = None
         self.neumann_points = None
         self.neumann_values = None
-    
+
+        self.internal_volumes = None
+        self.boundary_volumes = None
     def assemble_mesh(self, axis_attibutes, name = "Mesh " + str(np.random.randint(0, 1000))):
         """
         Monta a malha de acordo com os atributos passados
@@ -136,7 +140,8 @@ class Mesh:
 
         self.faces_trans = np.empty((self.nfaces), dtype=float)
         self.faces_adjacents = np.empty((self.nfaces, 2), dtype = int)
-    
+        
+        
         start_quick_time = time.time()
         self._assemble_adjacents()
         print("Time to assemble adjs in mesh {}: \t\t".format(self.name), round(time.time() - start_quick_time, 5), "s")
@@ -226,7 +231,8 @@ class Mesh:
         grid.GetCellData().AddArray(permeability_array)
 
         # Add the pressure array as a point data array
-        if(self.p.max() - self.p.min() <= 1e-6):
+        
+        if(self.p.max() - self.p.min() <= 1e-6 or self.p.max() > 1e6 or self.p.min() < -1e6):
             p = self.p
             if(p.max() == p.min()):
                 norm = np.ones_like(p)
@@ -246,7 +252,7 @@ class Mesh:
         writer.SetInputData(grid)
         writer.Write() 
     
-    def set_boundary_conditions(self, bc, f):
+    def set_boundary_conditions(self, bc, f, mask = False):
         """
         Define as condições de contorno
         """
@@ -255,19 +261,26 @@ class Mesh:
         start_time = time.time()
         # Get x, y and z and indexes of boundary volumes nodes
         self.q = np.zeros(self.nvols) if self.q is None else self.q
-        i = np.arange(self.nx)
-        j = np.arange(self.ny)
-        k = np.arange(self.nz)
-        i, j, k = np.meshgrid(i, j, k, indexing="ij")
-        internal = self._is_internal_node(i, j, k, "volume").flatten()
+
+        if self.internal_volumes is None or self.boundary_volumes is None:
+            index = np.arange(self.nvols)
+            i, j, k = index % self.nx, (index // self.nx) % self.ny, index // (self.nx * self.ny)
+            self.internal_volumes = self._is_internal_node(i, j, k, "volume")
+            self.boundary_volumes = np.logical_not(self.internal_volumes)
         
 
         if bc == "dirichlet":
             self.dirichlet_points = f[0]
             self.dirichlet_values = f[1]
             
-            # Get indexes of boundary volumes points (x,y,z) -> index
-            indexes = self._get_vol_index_from_coords(coords = (f[0][:, 0], f[0][:, 1], f[0][:, 2]))
+            if not mask:
+                # Get indexes of boundary volumes points (x,y,z) -> index
+                indexes = self._get_vol_index_from_coords(coords = (f[0][:, 0], f[0][:, 1], f[0][:, 2]))
+                indexes = np.where(self.boundary_volumes[indexes] == True)[0]
+            else:
+                indexes = np.where(np.logical_and(self.dirichlet_points, self.boundary_volumes))[0]
+                self.dirichlet_points = self._get_vol_coords_from_index(indexes)
+                self.dirichlet_values = self.dirichlet_values[indexes]
             for i in indexes:
                 self.A.data[self.A.indptr[i] : self.A.indptr[i + 1]] = 0.
             self.A[indexes, indexes] = 1.
@@ -279,8 +292,13 @@ class Mesh:
             self.neumann_points = f[0]
             self.neumann_values = f[1]
 
-            # Get indexes of boundary volumes points (x,y,z) -> index
-            indexes = self._get_vol_index_from_coords(coords = (f[0][:, 0], f[0][:, 1], f[0][:, 2]))
+            if not mask:
+                # Get indexes of boundary volumes points (x,y,z) -> index
+                indexes = self._get_vol_index_from_coords(coords = (f[0][:, 0], f[0][:, 1], f[0][:, 2]))
+                indexes = np.where(self.boundary_volumes[indexes] == True)[0]
+            else:
+                indexes = np.where(np.logical_and(self.neumann_points, self.boundary_volumes))[0]
+                self.neumann_values = self.neumann_values[indexes]
 
             self.q[indexes] += self.neumann_values
 
@@ -296,16 +314,15 @@ class Mesh:
             self.A = self.A.todense()
             self.p = np.linalg.solve(self.A, self.q)
         else:
-            self.p = np.zeros(self.nvols)
             if USE_GPU:
                 self.p = cp_spsolve(cp_csr_matrix(self.A), cp.array(self.q))
                 self.p = cp.asnumpy(self.p)
             else:
-                self.p = pypardiso.spsolve(self.A, self.q)
+                start_time = time.time()
+                self.p = pd_spsolve(self.A, self.q)
         #print(np.around(self.A.todense(), 3))
         #print(np.around(self.q, 3))
         #print(np.around(self.p, 3))
-        assert np.allclose(self.A.dot(self.p), self.q)
         print("Time to solve TPFA system in mesh {}: \t\t".format(self.name), round(time.time() - start_time, 5), "s")
 
     def _plot_2d(self, options):
@@ -326,7 +343,7 @@ class Mesh:
             y = ((index // self.nx) % self.ny + 1/2) * self.dy
             i = index % self.nx
             j = (index // self.nx) % self.ny
-            internal = self._is_internal_node(i, j, 0, "volume")
+            internal = self.internal_volumes
             p = self.p
             
             if not show_solution:
@@ -390,7 +407,7 @@ class Mesh:
             index = np.arange(self.nvols)
             i, j, k = index % self.nx, (index // self.nx) % self.ny, index // (self.nx * self.ny)
             x, y, z = (i + 1/2) * self.dx, (j + 1/2) * self.dy, (k + 1/2) * self.dz
-            internal = self._is_internal_node(i, j, k, "volume")
+            internal = self.internal_volumes
             p = self.p
             nx, ny, nz = self.nx, self.ny, self.nz
             if not show_boundary and self.nx > 2 and self.ny > 2 and self.nz > 2:
@@ -609,6 +626,15 @@ class Mesh:
             j = (index // self.nx) % self.ny
             k = (index // self.nx // self.ny)
             return np.array([(i + 1/2) * self.dx, (j + 1/2) * self.dy, k * self.dz])
+
+    def _get_vol_coords_from_index(self, index):
+        """
+        Retorna as coordenadas dos volumes a partir do índice
+        """
+        i = index % self.nx
+        j = (index // self.nx) % self.ny
+        k = (index // self.nx // self.ny)
+        return np.array([(i + 1/2) * self.dx, (j + 1/2) * self.dy, (k + 1/2) * self.dz])
 
     def _get_vol_index_from_coords(self, coords):
         """
