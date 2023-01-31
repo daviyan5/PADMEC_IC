@@ -80,14 +80,15 @@ class Mesh:
         self.dx, self.dy, self.dz = 0, 0, 0
 
         self.nhfaces, self.nlfaces, self.nwfaces = 0, 0, 0
+        self.Sh, self.Sl, self.Sw = 0, 0, 0
         self.nvols, self.nfaces = 0, 0
 
+        self.volumes_trans_tensor = None
         self.volumes_trans = None
         self.faces_trans = None
 
         self.A = None
         self.p = None
-        self.q = None
 
         self.dirichlet_points = None
         self.dirichlet_values = None
@@ -129,11 +130,15 @@ class Mesh:
         
         self.nvols = self._get_num_volumes()
 
+        self.volumes_trans_tensor = np.empty((self.nvols, 3, 3), dtype=float)
         self.volumes_trans = np.empty((self.nvols), dtype=float)
         
 
         self.nfaces = self._get_num_faces()
 
+        self.Sh = self.dy * self.dz
+        self.Sl = self.dx * self.dz
+        self.Sw = self.dx * self.dy
         self.nhfaces = (self.nx + 1) * self.ny * self.nz
         self.nlfaces = self.nx * (self.ny + 1) * self.nz
         self.nwfaces = self.nx * self.ny * (self.nz + 1)
@@ -156,28 +161,28 @@ class Mesh:
         """
         start_time = time.time()
 
-        self.volumes_trans = np.flip(K, 1)
-        self.volumes_trans = (np.trace(self.volumes_trans, axis1=3, axis2=4)/3).flatten()
+        self.volumes_trans_tensor = np.flip(K, 1)
+        self.volumes_trans = (np.trace(self.volumes_trans_tensor, axis1=3, axis2=4)/3).flatten()
     
 
         Kh = 2 / (1/K[:, :, 1:, 0, 0] + 1/K[:, :, :-1, 0, 0])
         Kh = np.insert(Kh,  0, K[:, :, 0, 0, 0], axis = 2)
         Kh = np.insert(Kh, Kh.shape[2], K[:, :, -1, 0, 0], axis = 2)
-        faces_trans_h = np.flip(Kh, 1).flatten() / self.dx #/ 2
+        faces_trans_h = self.Sh * np.flip(Kh, 1).flatten() / self.dx / 2
 
         faces_trans_l = np.empty((0))
         if(self.dimension > 1):
             Kl = 2 / (1/K[:, 1:, :, 1, 1] + 1/K[:, :-1, :, 1, 1])
             Kl = np.insert(Kl,  0, K[:, 0, :, 1, 1], axis = 1)
             Kl = np.insert(Kl, Kl.shape[1], K[:, -1, :, 1, 1], axis = 1)
-            faces_trans_l = np.flip(Kl, 1).flatten() / self.dy #/ 2
+            faces_trans_l = self.Sl * np.flip(Kl, 1).flatten() / self.dy / 2
 
         faces_trans_w = np.empty((0))
         if(self.dimension > 2):
             Kw = 2 / (1/K[1:, :, :, 2, 2] + 1/K[:-1, :, :, 2, 2])
             Kw = np.insert(Kw,  0, K[0, :, :, 2, 2], axis = 0)
             Kw = np.insert(Kw, Kw.shape[0], K[-1, :, :, 2, 2], axis = 0)
-            faces_trans_w = np.flip(Kw, 1).flatten() / self.dz #/ 2
+            faces_trans_w = self.Sw * np.flip(Kw, 1).flatten() / self.dz / 2
         
         self.faces_trans = np.hstack((faces_trans_h, faces_trans_l, faces_trans_w))
         self.faces_trans = np.hstack((-self.faces_trans, -self.faces_trans))
@@ -226,9 +231,9 @@ class Mesh:
         #x, y, z = (i + 1/2) * self.dx, (j + 1/2) * self.dy, (k + 1/2) * self.dz
         grid.SetSpacing(self.dx, self.dy, self.dz)
         # Add the permeability array as a cell data array
-        permeability_array = numpy_support.numpy_to_vtk(self.volumes_trans, deep=True)
-        permeability_array.SetName("Permeability")
-        grid.GetCellData().AddArray(permeability_array)
+        permeability_tensor = numpy_support.numpy_to_vtk(self.volumes_trans_tensor, deep=True)
+        permeability_tensor.SetName("Permeability")
+        grid.GetCellData().AddTensor(permeability_array)
 
         # Add the pressure array as a point data array
         
@@ -252,21 +257,29 @@ class Mesh:
         writer.SetInputData(grid)
         writer.Write() 
     
-    def set_boundary_conditions(self, bc, f, mask = False):
+    def set_boundary_conditions(self, bc, f, q, mask = False):
         """
         Define as condições de contorno
+
+        Parametros
+        ----------
+        bc: str
+            Tipo de condição de contorno
+        f: tuple
+            Tupla com as coordenadas e valores das condições de contorno
+        q: np.array
+            Vetor de fontes
+        mask: bool
+            Se True, as condições de contorno serão aplicadas apenas nos volumes que possuem a mesma coordenada que as condições de contorno
+        ----------
         """
         if(f[0].shape[0] == 0):
-            return
+            print("No boundary conditions were set for mesh {}".format(self.name))
+            return q
         start_time = time.time()
         # Get x, y and z and indexes of boundary volumes nodes
-        self.q = np.zeros(self.nvols) if self.q is None else self.q
 
-        if self.internal_volumes is None or self.boundary_volumes is None:
-            index = np.arange(self.nvols)
-            i, j, k = index % self.nx, (index // self.nx) % self.ny, index // (self.nx * self.ny)
-            self.internal_volumes = self._is_internal_node(i, j, k, "volume")
-            self.boundary_volumes = np.logical_not(self.internal_volumes)
+
         
 
         if bc == "dirichlet":
@@ -286,7 +299,8 @@ class Mesh:
             self.A[indexes, indexes] = 1.
             
             self.A.eliminate_zeros()
-            self.q[indexes] = self.dirichlet_values
+            q[indexes] = self.dirichlet_values
+    
 
         elif bc == "neumann":
             self.neumann_points = f[0]
@@ -299,12 +313,12 @@ class Mesh:
             else:
                 indexes = np.where(np.logical_and(self.neumann_points, self.boundary_volumes))[0]
                 self.neumann_values = self.neumann_values[indexes]
-
-            self.q[indexes] += self.neumann_values
+            q[indexes] += self.neumann_values
 
         print("Time to set {} bc's in mesh {}: \t\t".format(bc, self.name), round(time.time() - start_time, 5), "s")
+        return q
         
-    def solve_tpfa(self, dense = False):
+    def solve_tpfa(self, q, dense = False):
         """
         Resolve o sistema linear da malha
         """
@@ -312,16 +326,16 @@ class Mesh:
         # Check if there's no intersection between dirichlet and neumann points
         if dense:
             self.A = self.A.todense()
-            self.p = np.linalg.solve(self.A, self.q)
+            self.p = np.linalg.solve(self.A, q)
         else:
             if USE_GPU:
-                self.p = cp_spsolve(cp_csr_matrix(self.A), cp.array(self.q))
+                self.p = cp_spsolve(cp_csr_matrix(self.A), cp.array(q))
                 self.p = cp.asnumpy(self.p)
             else:
                 start_time = time.time()
-                self.p = pd_spsolve(self.A, self.q)
+                self.p = pd_spsolve(self.A, q)
         #print(np.around(self.A.todense(), 3))
-        #print(np.around(self.q, 3))
+        #print(np.around(q, 3))
         #print(np.around(self.p, 3))
         print("Time to solve TPFA system in mesh {}: \t\t".format(self.name), round(time.time() - start_time, 5), "s")
 
@@ -537,6 +551,10 @@ class Mesh:
         """
         Monta a matriz de adjacência de forma rápida
         """
+        i, j, k = index % self.nx, (index // self.nx) % self.ny, index // (self.nx * self.ny)
+        self.internal_volumes = self._is_internal_node(i, j, k, "volume")
+        self.boundary_volumes = np.logical_not(self.internal_volumes)
+
         hfaces = np.arange(self.nhfaces)
         hfaces_coords = self._get_faces_coords_from_index(hfaces, "hface")
         hfaces_coords = hfaces_coords.T
@@ -599,9 +617,9 @@ class Mesh:
         Verifica se as coordenadas estão dentro do domínio dos volumes
         """
         x, y, z = coords
-        return ((x >= 0 and x <= self.nx * self.dx - 1/2) and 
-                (y >= 0 and y <= self.ny * self.dy - 1/2) and 
-                (z >= 0 and z <= self.nz * self.dz - 1/2))
+        return (np.all(x >= 0 & x <= self.nx * self.dx - 1/2) and
+                np.all(y >= 0 & y <= self.ny * self.dy - 1/2) and
+                np.all(z >= 0 & z <= self.nz * self.dz - 1/2))
     
     def _get_faces_coords_from_index(self, index, face_type):
         """
