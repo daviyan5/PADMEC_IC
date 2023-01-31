@@ -66,7 +66,7 @@ def create_mesh(axis_attibutes, name, K = None, q = None,
         dirichlet_points = np.full(fill_value = False, shape = (nvols), dtype=bool)
         dirichlet_points[0] = True
         dirichlet_values = np.zeros((nvols))
-        dirichlet_values[0] = np.random.uniform(0, 1, size = (len(indices)))
+        dirichlet_values[0] = np.random.uniform(0, 1)
         fd = (dirichlet_points, dirichlet_values)
         maskd = True
 
@@ -74,7 +74,7 @@ def create_mesh(axis_attibutes, name, K = None, q = None,
         neumann_points = np.full(fill_value = False, shape = (nvols), dtype=bool)
         neumann_points[-1] = True
         neumann_values = np.zeros((nvols))
-        neumann_values[-1] = np.random.uniform(0, 1, size = (len(indices)))
+        neumann_values[-1] = np.random.uniform(0, 1)
         fn = (neumann_points, neumann_values)
         maskn = True
     

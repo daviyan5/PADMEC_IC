@@ -231,9 +231,9 @@ class Mesh:
         #x, y, z = (i + 1/2) * self.dx, (j + 1/2) * self.dy, (k + 1/2) * self.dz
         grid.SetSpacing(self.dx, self.dy, self.dz)
         # Add the permeability array as a cell data array
-        permeability_tensor = numpy_support.numpy_to_vtk(self.volumes_trans_tensor, deep=True)
-        permeability_tensor.SetName("Permeability")
-        grid.GetCellData().AddTensor(permeability_array)
+        permeability_array = numpy_support.numpy_to_vtk(self.volumes_trans, deep=True)
+        permeability_array.SetName("Permeability")
+        grid.GetCellData().AddArray(permeability_array)
 
         # Add the pressure array as a point data array
         
@@ -551,6 +551,7 @@ class Mesh:
         """
         Monta a matriz de adjacência de forma rápida
         """
+        index = np.arange(self.nvols)
         i, j, k = index % self.nx, (index // self.nx) % self.ny, index // (self.nx * self.ny)
         self.internal_volumes = self._is_internal_node(i, j, k, "volume")
         self.boundary_volumes = np.logical_not(self.internal_volumes)
