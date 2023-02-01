@@ -23,26 +23,30 @@ def create_mesh(axis_attibutes, name, K = None, q = None,
     axis_attibutes: lista de tuplas "(n, dx)" onde n é o número de volumes no eixo e dx é o tamanho do volume no eixo
     name: nome da malha
     
-    K: array de tensores de permeabilidade. shape = (nx, ny, nz, 3, 3)
+    K: array de tensores de permeabilidade. shape = (nz, ny, nx, 3, 3)
     
-    q: array de termos-fonte (nx * ny * nz). shape = (nx, ny, nz, 3, 3)
+    q: array de termos-fonte (nx * ny * nz). shape = (nz, ny, nx, 3, 3)
    
     fd: tupla (dirichlet_points, dirichlet_values) onde ->
         dirichlet_points: é um array de pontos (x, y, z) que farão parte da condição de contorno Dirichlet
         dirichlet_values: é um array de valores que serão atribuídos aos pontos de Dirichlet (em ordem de index)
-   
+
     maskd: booleano. caso seja True, a tupla fd será interpretada como uma mascára. Ou seja:
-        dirichelet_points: é um array de booleanos que indica quais volumes farão parte da condição de contorno Dirichlet. shape = (nx * ny * nz)
+        dirichelet_points: é um array de booleanos que indica quais 
+                           volumes farão parte da condição de contorno Dirichlet. shape = (nx * ny * nz)
         dirichlet_values: é um array de valores que serão atribuídos aos volumes de Dirichlet. shape =  (nx * ny * nz)
     
     fn: tupla (neumann_points, neumann_values) onde ->
         neumann_points: é um array de pontos (x, y, z) que farão parte da condição de contorno Neumann
         neumann_values: é um array de valores que serão atribuídos aos pontos de Neumann (em ordem de index)
+
     maskn: booleano. caso seja True, a tupla fn será interpretada como uma mascára. Ou seja:
-        neumann_points: é um array de booleanos que indica quais volumes farão parte da condição de contorno Neumann. shape = (nx * ny * nz)
+        neumann_points: é um array de booleanos que indica quais 
+                        volumes farão parte da condição de contorno Neumann. shape = (nx * ny * nz)
         neumann_values: é um array de valores que serão atribuídos aos volumes de Neumann. shape =  (nx * ny * nz)
     
-    dense: booleano. caso seja True, a matriz de transmissibilidade será armazenada como uma matriz densa. Caso contrário, será armazenada como uma matriz esparsa.
+    dense: booleano. caso seja True, a matriz de transmissibilidade será armazenada como uma matriz densa. 
+           Caso contrário, será armazenada como uma matriz esparsa.
     
     plot_options: tupla com as opções de plotagem (ver documentação da função plot_mesh).
     
@@ -97,6 +101,44 @@ def create_mesh(axis_attibutes, name, K = None, q = None,
     return mesh
 
 @profile
+def exemplo1():
+    # Example 1
+    Lx, Ly = 0.6, 1
+    nx, ny, nz = 500, 500, 1
+    dx, dy, dz = Lx/nx, Ly/ny, 0.1
+
+    k_time = time.time()
+    K1 = get_random_tensor(52, 52, size = (nz, ny, nx))
+    print("Time to create K1: \t\t {} s".format(round(time.time() - k_time, 5)))
+
+    border_time = time.time()
+    all_indices = np.arange(nx * ny * nz)
+    left_border = all_indices[all_indices % nx == 0]
+    up_border = all_indices[nx * (ny - 1):]
+    right_border = all_indices[all_indices % nx == nx - 1]
+    down_border = all_indices[0: nx]
+    print("Time to create borders: \t {} s".format(round(time.time() - border_time, 5)))
+
+    d_time = time.time()
+    fd = np.full(fill_value = False, shape = (nx * ny * nz), dtype=bool)
+    fd[up_border] = fd[down_border] = fd[right_border] = True
+    fd_values = np.zeros((nx * ny * nz))
+    fd_values[up_border] ,fd_values[down_border] ,fd_values[right_border] = 0, 100, 0
+    fd1 = (fd, fd_values)
+    print("Time to create dirichlet: \t {} s".format(round(time.time() - d_time, 5)))
+
+
+    n_time = time.time()
+    fn = np.full(fill_value = False, shape = (nx * ny * nz), dtype=bool)
+    fn[left_border] = True
+    fn_values = np.zeros((nx * ny * nz))
+    fn_values[left_border] = 0
+    fn1 = (fn, fn_values)
+    print("Time to create neumann: \t {} s".format(round(time.time() - n_time, 5)))
+
+    print("-----------------------------------------------------------------------")
+    mesh1 = create_mesh([(nx, dx), (ny, dy), (nz, dz)], "Exemplo 1", 
+                        fd = fd1, maskd = True, K = K1, fn = fn1, maskn = True, create_vtk=True)
 def main():
     np.set_printoptions(suppress=True)
 
@@ -109,10 +151,10 @@ def main():
     show_solution = True
 
     options = (show_coordinates, show_volumes, show_faces, show_adjacents, show_transmissibilities, print_matrices, show_solution)
-    #options = None
-    #mesh1d = create_mesh([(20, 0.1)], "1D", plot_options=options, create_vtk=True)
-    #mesh2d = create_mesh([(3, 1), (3, 1)], "2D", plot_options=options, create_vtk=True)
-    mesh3d = create_mesh([(20, 1), (20, 1), (20, 1)], "3D", plot_options=options, create_vtk=True)
+    
+    exemplo1()
+    
+    
 
 
 
