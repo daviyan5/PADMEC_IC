@@ -1,12 +1,11 @@
 import numpy as np
-import cupy as cp
+
 import vtk
 import matplotlib.pyplot as plt
 
 
 from vtk.util import numpy_support
-from cupyx.scipy.sparse import csr_matrix as cp_csr_matrix
-from cupyx.scipy.sparse.linalg import spsolve as cp_spsolve
+
 
 from scipy.sparse import csr_matrix, lil_matrix, dia_matrix
 from scipy.sparse.linalg import spsolve
@@ -16,7 +15,7 @@ from pypardiso import spsolve as pd_spsolve
 
 import time
 import warnings
-USE_GPU = False
+
 
 class Node:
    def __init__(self, type_node, internal, index, i = 0, j = 0, k = 0, x = 0, y = 0, z = 0):
@@ -328,12 +327,9 @@ class Mesh:
             self.A = self.A.todense()
             self.p = np.linalg.solve(self.A, q)
         else:
-            if USE_GPU:
-                self.p = cp_spsolve(cp_csr_matrix(self.A), cp.array(q))
-                self.p = cp.asnumpy(self.p)
-            else:
-                start_time = time.time()
-                self.p = pd_spsolve(self.A, q)
+            
+            start_time = time.time()
+            self.p = pd_spsolve(self.A, q)
         #print(np.around(self.A.todense(), 3))
         #print(np.around(q, 3))
         #print(np.around(self.p, 3))
