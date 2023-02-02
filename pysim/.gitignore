@@ -1,0 +1,10 @@
+
+vscode
+Docs
+structured_grid.vtk
+*.npy
+vtks/*.vtk
+*.pdf
+FiniteVol/__pycache__
+Mesh/__pycache__
+Utils/__pycache__

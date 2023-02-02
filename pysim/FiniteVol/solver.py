@@ -1,19 +1,22 @@
 import numpy as np
 import time
-from mesh import Mesh
-from memory_profiler import profile
+import os
+import sys
+
+## Importing the mesh handler
+current = os.path.dirname(os.path.realpath(__file__))   
+parent = os.path.dirname(current)
+sys.path.append(parent)
+from Mesh.mesh_handler import Mesh
+from Utils import tensor_generator as tg
+sys.path.pop()
 
 
-def get_random_tensor(a, b, size):
-    """
-    Retorna um array de tamanho size cujos elementos são tensores aleatórios diagonais 3 x 3, com valores entre a e b
 
-    """
-    diags = np.random.uniform(a, b, size = size + (3,))
-    return np.apply_along_axis(np.diag, 3, diags)
+def get_random_tensor(a, b, size, n = 3, m = 3, only_diagonal = True):
+    return tg.get_random_tensor(a, b, size, n, m, only_diagonal)
 
-
-def create_mesh(axis_attibutes, name, K = None, q = None, 
+def simulate_tpfa(axis_attibutes, name, K = None, q = None, 
                 fd = None, maskd = False, fn = None, maskn = False, 
                 dense = False, plot_options = None, create_vtk = False):
 
@@ -23,26 +26,30 @@ def create_mesh(axis_attibutes, name, K = None, q = None,
     axis_attibutes: lista de tuplas "(n, dx)" onde n é o número de volumes no eixo e dx é o tamanho do volume no eixo
     name: nome da malha
     
-    K: array de tensores de permeabilidade. shape = (nx, ny, nz, 3, 3)
+    K: array de tensores de permeabilidade. shape = (nz, ny, nx, 3, 3)
     
-    q: array de termos-fonte (nx * ny * nz). shape = (nx, ny, nz, 3, 3)
+    q: array de termos-fonte (nx * ny * nz). shape = (nz, ny, nx, 3, 3)
    
     fd: tupla (dirichlet_points, dirichlet_values) onde ->
         dirichlet_points: é um array de pontos (x, y, z) que farão parte da condição de contorno Dirichlet
         dirichlet_values: é um array de valores que serão atribuídos aos pontos de Dirichlet (em ordem de index)
-   
+
     maskd: booleano. caso seja True, a tupla fd será interpretada como uma mascára. Ou seja:
-        dirichelet_points: é um array de booleanos que indica quais volumes farão parte da condição de contorno Dirichlet. shape = (nx * ny * nz)
+        dirichelet_points: é um array de booleanos que indica quais 
+                           volumes farão parte da condição de contorno Dirichlet. shape = (nx * ny * nz)
         dirichlet_values: é um array de valores que serão atribuídos aos volumes de Dirichlet. shape =  (nx * ny * nz)
     
     fn: tupla (neumann_points, neumann_values) onde ->
         neumann_points: é um array de pontos (x, y, z) que farão parte da condição de contorno Neumann
         neumann_values: é um array de valores que serão atribuídos aos pontos de Neumann (em ordem de index)
+
     maskn: booleano. caso seja True, a tupla fn será interpretada como uma mascára. Ou seja:
-        neumann_points: é um array de booleanos que indica quais volumes farão parte da condição de contorno Neumann. shape = (nx * ny * nz)
+        neumann_points: é um array de booleanos que indica quais 
+                        volumes farão parte da condição de contorno Neumann. shape = (nx * ny * nz)
         neumann_values: é um array de valores que serão atribuídos aos volumes de Neumann. shape =  (nx * ny * nz)
     
-    dense: booleano. caso seja True, a matriz de transmissibilidade será armazenada como uma matriz densa. Caso contrário, será armazenada como uma matriz esparsa.
+    dense: booleano. caso seja True, a matriz de transmissibilidade será armazenada como uma matriz densa. 
+           Caso contrário, será armazenada como uma matriz esparsa.
     
     plot_options: tupla com as opções de plotagem (ver documentação da função plot_mesh).
     
@@ -96,7 +103,7 @@ def create_mesh(axis_attibutes, name, K = None, q = None,
         
     return mesh
 
-@profile
+
 def main():
     np.set_printoptions(suppress=True)
 
@@ -109,19 +116,8 @@ def main():
     show_solution = True
 
     options = (show_coordinates, show_volumes, show_faces, show_adjacents, show_transmissibilities, print_matrices, show_solution)
-    #options = None
-    #mesh1d = create_mesh([(20, 0.1)], "1D", plot_options=options, create_vtk=True)
-    #mesh2d = create_mesh([(3, 1), (3, 1)], "2D", plot_options=options, create_vtk=True)
-    mesh3d = create_mesh([(20, 1), (20, 1), (20, 1)], "3D", plot_options=options, create_vtk=True)
+    
 
-
-
-def compare(mesh3d):
-    # Compare face transmissibilities with IMPRESS TFPA matrix saved in faces_trans.npy
-    A_tpfa = np.load("Atpfa.npy")
-    print(np.allclose(mesh3d.A.todense(), A_tpfa))
-    print(mesh3d.A.todense()[0:3, 0:3])
-    print(A_tpfa[0:3, 0:3])
 
 if __name__ == "__main__":
     main()
