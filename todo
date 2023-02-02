@@ -1,1 +1,2 @@
-1. Separar o manipulador de malhas do simulador.
+1. Limpar arquivo de malhas
+2. Separar o manipulador de malhas do simulador.
