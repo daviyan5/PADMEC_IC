@@ -1,19 +1,22 @@
 import numpy as np
 import time
-from mesh import Mesh
-from memory_profiler import profile
+import os
+import sys
+
+## Importing the mesh handler
+current = os.path.dirname(os.path.realpath(__file__))   
+parent = os.path.dirname(current)
+sys.path.append(parent)
+from Mesh.mesh_handler import Mesh
+from Utils import tensor_generator as tg
+sys.path.pop()
 
 
-def get_random_tensor(a, b, size):
-    """
-    Retorna um array de tamanho size cujos elementos são tensores aleatórios diagonais 3 x 3, com valores entre a e b
 
-    """
-    diags = np.random.uniform(a, b, size = size + (3,))
-    return np.apply_along_axis(np.diag, 3, diags)
+def get_random_tensor(a, b, size, n = 3, m = 3, only_diagonal = True):
+    return tg.get_random_tensor(a, b, size, n, m, only_diagonal)
 
-
-def create_mesh(axis_attibutes, name, K = None, q = None, 
+def simulate_tpfa(axis_attibutes, name, K = None, q = None, 
                 fd = None, maskd = False, fn = None, maskn = False, 
                 dense = False, plot_options = None, create_vtk = False):
 
@@ -100,45 +103,7 @@ def create_mesh(axis_attibutes, name, K = None, q = None,
         
     return mesh
 
-@profile
-def exemplo1():
-    # Example 1
-    Lx, Ly = 0.6, 1
-    nx, ny, nz = 500, 500, 1
-    dx, dy, dz = Lx/nx, Ly/ny, 0.1
 
-    k_time = time.time()
-    K1 = get_random_tensor(52, 52, size = (nz, ny, nx))
-    print("Time to create K1: \t\t {} s".format(round(time.time() - k_time, 5)))
-
-    border_time = time.time()
-    all_indices = np.arange(nx * ny * nz)
-    left_border = all_indices[all_indices % nx == 0]
-    up_border = all_indices[nx * (ny - 1):]
-    right_border = all_indices[all_indices % nx == nx - 1]
-    down_border = all_indices[0: nx]
-    print("Time to create borders: \t {} s".format(round(time.time() - border_time, 5)))
-
-    d_time = time.time()
-    fd = np.full(fill_value = False, shape = (nx * ny * nz), dtype=bool)
-    fd[up_border] = fd[down_border] = fd[right_border] = True
-    fd_values = np.zeros((nx * ny * nz))
-    fd_values[up_border] ,fd_values[down_border] ,fd_values[right_border] = 0, 100, 0
-    fd1 = (fd, fd_values)
-    print("Time to create dirichlet: \t {} s".format(round(time.time() - d_time, 5)))
-
-
-    n_time = time.time()
-    fn = np.full(fill_value = False, shape = (nx * ny * nz), dtype=bool)
-    fn[left_border] = True
-    fn_values = np.zeros((nx * ny * nz))
-    fn_values[left_border] = 0
-    fn1 = (fn, fn_values)
-    print("Time to create neumann: \t {} s".format(round(time.time() - n_time, 5)))
-
-    print("-----------------------------------------------------------------------")
-    mesh1 = create_mesh([(nx, dx), (ny, dy), (nz, dz)], "Exemplo 1", 
-                        fd = fd1, maskd = True, K = K1, fn = fn1, maskn = True, create_vtk=True)
 def main():
     np.set_printoptions(suppress=True)
 
@@ -152,18 +117,7 @@ def main():
 
     options = (show_coordinates, show_volumes, show_faces, show_adjacents, show_transmissibilities, print_matrices, show_solution)
     
-    exemplo1()
-    
-    
 
-
-
-def compare(mesh3d):
-    # Compare face transmissibilities with IMPRESS TFPA matrix saved in faces_trans.npy
-    A_tpfa = np.load("Atpfa.npy")
-    print(np.allclose(mesh3d.A.todense(), A_tpfa))
-    print(mesh3d.A.todense()[0:3, 0:3])
-    print(A_tpfa[0:3, 0:3])
 
 if __name__ == "__main__":
     main()
