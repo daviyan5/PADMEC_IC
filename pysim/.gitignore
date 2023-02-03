@@ -3,7 +3,7 @@ vscode
 Docs
 structured_grid.vtk
 *.npy
-vtks/*.vtk
+*.vtk
 *.pdf
 FiniteVol/__pycache__
 Mesh/__pycache__
