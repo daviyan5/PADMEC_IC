@@ -21,12 +21,31 @@ def main():
     mesh = FineScaleMesh("./mesh/20.h5m")
     n_vols = len(mesh.volumes)
     q = np.zeros((n_vols))
-    permeability = get_random_tensor(1, 1, (n_vols,))
+    permeability = get_random_tensor(52, 52, (n_vols,))
 
-    is_dirichlet_node = np.array([True] + [False for i in range(n_vols - 1)])
-    mesh.is_neumann_node = np.array([False for i in range(n_vols - 1)] + [True] )
-    dirichlet = np.array([1.] + [0. for i in range(n_vols - 1)])
-    neumann = np.array([0. for i in range(n_vols - 1)]+ [1.])
+    nx, ny, nz = 20, 20, 20
+    all_indices = np.arange(n_vols)
+    left_border = all_indices[all_indices % nx == 0]
+    up_border = all_indices[nx * (ny - 1) <= all_indices  % (nx * ny)]
+    right_border = all_indices[all_indices % nx == nx - 1]
+    down_border = all_indices[(all_indices % (nx * ny)) < nx]
+    front_border = all_indices[all_indices < nx * ny]
+    back_border = all_indices[nx * ny * (nz - 1) <= all_indices]
+    
+    fd = np.full(fill_value = False, shape = (nx * ny * nz), dtype=bool)
+    fd[up_border] = fd[down_border] = fd[right_border] = True
+    fd_values = np.zeros((nx * ny * nz))
+    fd_values[up_border] ,fd_values[down_border] ,fd_values[right_border] = 0, 100, 0
+
+    fn = np.full(fill_value = False, shape = (nx * ny * nz), dtype=bool)
+    fn[left_border] = True
+    fn_values = np.zeros((nx * ny * nz))
+    fn_values[left_border] = 0
+
+    is_dirichlet_node = fd
+    is_neumann_node = fn
+    dirichlet = fd_values
+    neumann = fn_values
 
     internal_faces = mesh.faces.internal[:]
 
@@ -97,7 +116,7 @@ def main():
     # Boundary
     boundary_time = time.time()
     dirichlet_nodes = np.nonzero(is_dirichlet_node)[0]
-    neumann_nodes = np.setdiff1d(np.nonzero(mesh.is_neumann_node)[0], dirichlet_nodes)
+    neumann_nodes = np.setdiff1d(np.nonzero(is_neumann_node)[0], dirichlet_nodes)
     for i in dirichlet_nodes:
         A_tpfa.data[A_tpfa.indptr[i] : A_tpfa.indptr[i + 1]] = 0.
     A_tpfa[dirichlet_nodes, dirichlet_nodes] = 1
@@ -115,6 +134,7 @@ def main():
     vtk_time = time.time()
     mesh.permeability[:] = np.reshape(permeability, (n_vols,9))
     mesh.is_dirichlet_node[:] = is_dirichlet_node
+    mesh.is_neumann_node[:] = is_neumann_node
     mesh.dirichlet[:] = dirichlet
     mesh.neumann[:] = neumann
 
@@ -122,7 +142,7 @@ def main():
     mesh.core.mb.add_entities(meshset, mesh.core.all_volumes)
     mesh.core.mb.write_file("./mesh_impress.vtk", [meshset])
     print("Saving VTK time: \t\t {} s".format(np.around(time.time() - vtk_time, 5)))
-    np.save("Atpfa.npy", A_tpfa.todense())
+
     
 if __name__ == "__main__":
     main()

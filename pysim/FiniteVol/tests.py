@@ -28,7 +28,7 @@ def all_examples(nx = 100, ny = 100, nz = 1, check = False):
 
 def example1(nx = 100, ny = 100, nz = 1, check = False):
     # Example 1
-    Lx, Ly, Lz = 0.6, 1, 0.05
+    Lx, Ly, Lz = 20, 20, 20
     nx, ny, nz = nx, ny, nz
     dx, dy, dz = Lx/nx, Ly/ny, Lz/nz
     all_indices = np.arange(nx * ny * nz)
@@ -159,4 +159,4 @@ def example3(nx = 100, ny = 100, nz = 1, check = False):
     
 
 if __name__ == '__main__':
-    all_examples(40, 40, 40, check = True)
+    all_examples(20, 20, 20, check = True)
