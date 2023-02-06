@@ -1,4 +1,5 @@
 import numpy as np
+import numba as nb
 import time
 import os
 import sys
@@ -7,7 +8,7 @@ import warnings
 
 
 from vtk.util import numpy_support
-from scipy.sparse import csr_matrix
+from scipy.sparse import csr_matrix, lil_matrix
 from scipy.sparse.linalg import spsolve
 from scipy.sparse import SparseEfficiencyWarning
 from pypardiso import spsolve as pd_spsolve
@@ -20,9 +21,10 @@ from Utils import tensor_generator as tg
 sys.path.pop()
 
 
+print_times = True
 
-def get_random_tensor(a, b, size, n = 3, m = 3, only_diagonal = False):
-    return tg.get_random_tensor(a, b, size, n, m, only_diagonal)
+def get_random_tensor(a, b, size, n = 3, m = 3):
+    return tg.get_random_tensor(a, b, size, n, m)
 
 def simulate_tpfa(axis_attibutes, name, K = None, q = None, 
                 fd = None, maskd = False, fn = None, maskn = False, 
@@ -67,7 +69,7 @@ def simulate_tpfa(axis_attibutes, name, K = None, q = None,
     warnings.filterwarnings("ignore", category=SparseEfficiencyWarning)
     start_time = time.time()
     mesh = Mesh()
-    mesh.assemble_mesh(axis_attibutes, name)
+    mesh.assemble_mesh(axis_attibutes, print_times, name)
     nx, ny, nz = mesh.nx, mesh.ny, mesh.nz
     dx, dy, dz = mesh.dx, mesh.dy, mesh.dz
     nvols = mesh.nvols
@@ -102,7 +104,8 @@ def simulate_tpfa(axis_attibutes, name, K = None, q = None,
     q = solver.set_boundary_conditions("neumann", fn, q, maskn)
     solver.solve_tpfa(q, dense, check)
 
-    print("Time to simulate {} elements in mesh {}: \t {} s\n\n".format(mesh.nvols, mesh.name, round(time.time() - start_time, 5)))
+    if print_times: 
+        print("Time to simulate {} elements in mesh {}: \t {} s\n\n".format(mesh.nvols, mesh.name, round(time.time() - start_time, 5)))
 
     
     if create_vtk:
@@ -170,30 +173,44 @@ class Solver:
         self.faces_trans = np.hstack((faces_trans_h, faces_trans_l, faces_trans_w))
         self.faces_trans = np.hstack((-self.faces_trans, -self.faces_trans))
 
-        print("Time to assemble faces T in mesh {}: \t\t".format(self.mesh.name), round(time.time() - start_time, 5), "s")
-
+        if print_times: 
+            print("Time to assemble faces T in mesh {}: \t\t".format(self.mesh.name), round(time.time() - start_time, 5), "s")
+    
     def assemble_tpfa_matrix(self):
         """
         Monta a matriz de transmissibilidade TPFA
         """
         start_time = time.time()
 
-        row_index_p = self.mesh.faces_adjacents[:, 0]
-        col_index_p = self.mesh.faces_adjacents[:, 1]
+        row_index_p = self.mesh.faces.adjacents[:, 0]
+        col_index_p = self.mesh.faces.adjacents[:, 1]
         
         row_index = np.hstack((row_index_p, col_index_p))
         col_index = np.hstack((col_index_p, row_index_p))
 
+        #equal_idx = np.where(row_index == col_index)[0]
+        #equal_idx = row_index[equal_idx]
+        #self.faces_trans[equal_idx] = 1.
         
         assert len(row_index) == len(col_index)
         assert len(row_index) == 2 * self.mesh.nfaces
         assert len(row_index) == len(self.faces_trans)
 
-        self.A = csr_matrix((self.faces_trans, (row_index, col_index)), shape=(self.mesh.nvols, self.mesh.nvols))
-        self.A.setdiag(0)
-        self.A.setdiag(-self.A.sum(axis=1))
-        print("Time to assemble TPFA matrix in mesh {}: \t".format(self.mesh.name), round(time.time() - start_time, 5), "s")
 
+        creation_time = time.time()
+        self.A = csr_matrix((self.faces_trans, (row_index, col_index)), shape=(self.mesh.nvols, self.mesh.nvols))
+        if print_times: 
+            print("Time to create TPFA matrix in mesh {}: \t\t".format(self.mesh.name), round(time.time() - creation_time, 5), "s")
+
+    
+        A = self.A.tolil()
+        self.A.setdiag(0)
+        self.A.setdiag(-self.A.sum(axis=1)) 
+        A = self.A.tocsr()
+        
+        if print_times: 
+            print("Time to assemble TPFA matrix in mesh {}: \t\t".format(self.mesh.name), round(time.time() - start_time, 5), "s")
+    
     def set_boundary_conditions(self, bc, f, q, mask = False):
         """
         Define as condições de contorno
@@ -218,34 +235,33 @@ class Solver:
             self.dirichlet_points = f[0]
             self.dirichlet_values = f[1]
             
+            indexes = None
             if not mask:
                 # Get indexes of boundary volumes points (x,y,z) -> index
-                indexes = self.mesh._get_vol_index_from_coords(coords = (f[0][:, 0], f[0][:, 1], f[0][:, 2]))
-                indexes = np.where(self.mesh.boundary_volumes[indexes] == True)[0]
+                indexes = self.mesh.volumes._get_index_from_coords(coords = (f[0][:, 0], f[0][:, 1], f[0][:, 2]))
+                indexes = np.where(self.mesh.volumes.boundary[indexes] == True)[0]
             else:
-                indexes = np.where(np.logical_and(self.dirichlet_points, self.mesh.boundary_volumes))[0]
-                self.dirichlet_points = self.mesh._get_vol_coords_from_index(indexes)
-                self.dirichlet_values = self.dirichlet_values[indexes]
+                indexes = np.where(np.logical_and(self.dirichlet_points, self.mesh.volumes.boundary))[0]
             for i in indexes:
                 self.A.data[self.A.indptr[i] : self.A.indptr[i + 1]] = 0.
             self.A[indexes, indexes] = 1.
             
-            self.A.eliminate_zeros()
             q[indexes] = self.dirichlet_values
         elif bc == "neumann":
             self.neumann_points = f[0]
             self.neumann_values = f[1]
 
+            indexes = None
             if not mask:
                 # Get indexes of boundary volumes points (x,y,z) -> index
-                indexes = self.mesh._get_vol_index_from_coords(coords = (f[0][:, 0], f[0][:, 1], f[0][:, 2]))
-                indexes = np.where(self.mesh.boundary_volumes[indexes] == True)[0]
+                indexes = self.mesh.volumes._get_index_from_coords(coords = (f[0][:, 0], f[0][:, 1], f[0][:, 2]))
+                indexes = np.where(self.mesh.volumes.boundary[indexes] == True)[0]
             else:
-                indexes = np.where(np.logical_and(self.neumann_points, self.mesh.boundary_volumes))[0]
-                self.neumann_values = self.neumann_values[indexes]
+                indexes = np.where(np.logical_and(self.neumann_points, self.mesh.volumes.boundary))[0]
             q[indexes] += self.neumann_values
 
-        print("Time to set {} bc's in mesh {}: \t\t".format(bc, self.mesh.name), round(time.time() - start_time, 5), "s")
+        if print_times: 
+            print("Time to set {} bc's in mesh {}: \t\t".format(bc, self.mesh.name), round(time.time() - start_time, 5), "s")
         return q
 
     def solve_tpfa(self, q, dense = False, check = False):
@@ -258,7 +274,8 @@ class Solver:
             self.A = self.A.todense()
             self.p = np.linalg.solve(self.A, q)
         else:
-            
+            self.A.eliminate_zeros()
+            q = csr_matrix(q).T
             start_time = time.time()
             self.p = pd_spsolve(self.A, q)
         
@@ -269,7 +286,8 @@ class Solver:
         #print(np.around(self.A.todense(), 3))
         #print(np.around(q, 3))
         #print(np.around(self.p, 3))
-        print("Time to solve TPFA system in mesh {}: \t\t".format(self.mesh.name), round(time.time() - start_time, 5), "s")
+        if print_times: 
+            print("Time to solve TPFA system in mesh {}: \t\t".format(self.mesh.name), round(time.time() - start_time, 5), "s")
     
     def create_vtk(self):
         # Create the rectilinear grid
