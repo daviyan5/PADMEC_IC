@@ -177,14 +177,14 @@ def example1(nx = 100, ny = 100, nz = 1, check = False, create_vtk = True):
     
 def example2(nx = 100, ny = 100, nz = 1, check = False, create_vtk = True):
     # Example 1
-    Lx, Ly, Lz = 20, 20, 20
+    Lx, Ly, Lz = 20, 20,20
     nx, ny, nz = nx, ny, nz
     dx, dy, dz = Lx/nx, Ly/ny, Lz/nz
     all_indices = np.arange(nx * ny * nz)
     k_time = time.time()
     K2 = solver.get_random_tensor(15., 15., size = (nz, ny, nx))
     K_left = [[50., 0., 0.], [0., 50., 0.], [0., 0., 50.]]
-    K2[:, :, : 10] = K_left
+    K2[:, :, : nx // 2] = K_left
     if solver.verbose: 
         print("Time to create K2: \t\t {} s".format(round(time.time() - k_time, 5)))
 
@@ -230,22 +230,27 @@ def example2(nx = 100, ny = 100, nz = 1, check = False, create_vtk = True):
     impress_p = np.load("./tmp/impress_p.npy", allow_pickle=True)
     impress_q = np.load("./tmp/impress_q.npy", allow_pickle=True)
 
-    print(impress_tpfa[0:3])
-    print(solver2.A.todense()[0:3])
+    #from scipy.sparse import csr_matrix
     #assert np.allclose(impress_tpfa, solver2.A.todense())
-    impress_p = impress_p.reshape((nx, ny, nz)).flatten()
-    
+    impress_p = impress_p.reshape((20, 20, 20)).flatten()
+    #print(impress_tpfa[:3], solver2.A.todense()[:3])
     
     #assert np.allclose(impress_p, solver2.p)
-    #assert np.allclose(impress_q, solver2.q)
+    #assert np.allclose(impress_q, q)
 
     ## Plotar pressão por x
     if solver.verbose:
         print("-----------------------------------------------------------------------")
         print("Plotting pressure by x")
         from matplotlib import pyplot as plt
-        plt.plot(mesh2.volumes.x, solver2.p, "x")
-        plt.plot(mesh2.volumes.x, impress_p, "o")
+        plt.plot(mesh2.volumes.x[:nx], solver2.p[:nx], label = "Numerical")
+        plt.text(mesh2.volumes.x[nx//2], solver2.p[nx//2], "p = {:.2f}".format(solver2.p[nx//2]))
+        an_p = 100 - (100 - 30) * (mesh2.volumes.x[:nx//2] / 10) * (15/65)
+        an_p = np.hstack((an_p, (100 + 70 * (50 - 15)/65) - (100 - 30) * (mesh2.volumes.x[nx//2:nx] / 10) * (50/65)))
+        plt.plot(mesh2.volumes.x[:nx], an_p[:nx], label = "Analytical")
+        plt.plot(mesh2.volumes.x[:nx], solver2.p[:nx] - an_p, label = "Error")
+        plt.legend()
+        print("Max error: {}".format(np.max(np.abs(solver2.p[:nx] - an_p))))
         plt.grid()
         plt.show()
 
@@ -311,10 +316,16 @@ def example_random(nvols):
                                           fd = fd, fn = fn,
                                           create_vtk=True, check=True)
     
-
+def example_comparative(nx = 100, ny = 100, nz = 1, check = False, create_vtk = True):
+    # Let p = sen(x) + 2 * cos(y) + 3 * tan(z)
+    # grad(p) = (cos(x), -2 * sin(y), 3 / (cos(z) ** 2))
+    # -div(gra(p)) = sin(x) - 2cos(y) + 6tan(z)sec²(z) = d
+    # q = d * A * k
+    
+    pass
 if __name__ == '__main__':
     #Plot time x number of cells and number of cells x interation
     #do_time_tests()
-    all_examples(check=True, nx = 20, ny = 20, nz = 20)
+    all_examples(check=True, nx = 200, ny = 200, nz = 1)
     
     

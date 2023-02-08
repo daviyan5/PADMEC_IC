@@ -5,7 +5,6 @@ structured_grid.vtk
 *.npy
 *.vtk
 *.pdf
-*.png
 FiniteVol/__pycache__
 Mesh/__pycache__
 Utils/__pycache__

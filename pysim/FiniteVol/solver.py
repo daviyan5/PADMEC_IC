@@ -148,21 +148,21 @@ class Solver:
         Kh = 2 / (1/K[:, :, 1:, 0, 0] + 1/K[:, :, :-1, 0, 0])
         Kh = np.insert(Kh,  0, K[:, :, 0, 0, 0], axis = 2)
         Kh = np.insert(Kh, Kh.shape[2], K[:, :, -1, 0, 0], axis = 2)
-        faces_trans_h = self.mesh.Sh * np.flip(Kh, 1).flatten() / (self.mesh.dx) / 2
+        faces_trans_h = self.mesh.Sh * np.flip(Kh, 1).flatten() / (self.mesh.dx)
 
         faces_trans_l = np.empty((0))
         if(self.mesh.dimension > 1):
             Kl = 2 / (1/K[:, 1:, :, 1, 1] + 1/K[:, :-1, :, 1, 1])
             Kl = np.insert(Kl,  0, K[:, 0, :, 1, 1], axis = 1)
             Kl = np.insert(Kl, Kl.shape[1], K[:, -1, :, 1, 1], axis = 1)
-            faces_trans_l = self.mesh.Sl * np.flip(Kl, 1).flatten() / (self.mesh.dy) / 2
+            faces_trans_l = self.mesh.Sl * np.flip(Kl, 1).flatten() / (self.mesh.dy)
 
         faces_trans_w = np.empty((0))
         if(self.mesh.dimension > 2):
             Kw = 2 / (1/K[1:, :, :, 2, 2] + 1/K[:-1, :, :, 2, 2])
             Kw = np.insert(Kw,  0, K[0, :, :, 2, 2], axis = 0)
             Kw = np.insert(Kw, Kw.shape[0], K[-1, :, :, 2, 2], axis = 0)
-            faces_trans_w = self.mesh.Sw * np.flip(Kw, 1).flatten() / (self.mesh.dz) / 2
+            faces_trans_w = self.mesh.Sw * np.flip(Kw, 1).flatten() / (self.mesh.dz)
         
         self.faces_trans = np.hstack((faces_trans_h, faces_trans_l, faces_trans_w))
         self.faces_trans = np.hstack((-self.faces_trans, -self.faces_trans))
