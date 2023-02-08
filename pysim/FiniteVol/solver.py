@@ -1,5 +1,4 @@
 import numpy as np
-import numba as nb
 import time
 import os
 import sys

@@ -118,15 +118,15 @@ def do_time_tests():
         
         np.save("./important/up_estimator.npy", up_p)
         np.save("./important/low_estimator.npy", low_p)
-def all_examples(nx = 100, ny = 100, nz = 1, check = False, create_vtk = True):
+def all_examples(nx = 100, ny = 100, nz = 100, check = False, create_vtk = True):
     solver.verbose = True
     example1(nx, ny, nz, check)
     example2(nx, ny, nz, check)
     example_random(nvols = nx * ny * nz)
     
-def example1(nx = 100, ny = 100, nz = 1, check = False, create_vtk = True):
+def example1(nx = 10, ny = 10, nz = 10, check = False, create_vtk = True):
     # Example 1
-    Lx, Ly, Lz = 0.6, 1, 0.01
+    Lx, Ly, Lz = 0.6, 1, 0.00001
     nx, ny, nz = nx, ny, nz
     dx, dy, dz = Lx/nx, Ly/ny, Lz/nz
     all_indices = np.arange(nx * ny * nz)
@@ -226,13 +226,13 @@ def example2(nx = 100, ny = 100, nz = 1, check = False, create_vtk = True):
                         fd = fd2, fn = fn2, create_vtk=create_vtk, check=check)
     
     #compare with impress
-    impress_tpfa = np.load("./tmp/impress_tpfa.npy", allow_pickle=True)
-    impress_p = np.load("./tmp/impress_p.npy", allow_pickle=True)
-    impress_q = np.load("./tmp/impress_q.npy", allow_pickle=True)
+    #impress_tpfa = np.load("./tmp/impress_tpfa.npy", allow_pickle=True)
+    #impress_p = np.load("./tmp/impress_p.npy", allow_pickle=True)
+    #impress_q = np.load("./tmp/impress_q.npy", allow_pickle=True)
 
     #from scipy.sparse import csr_matrix
     #assert np.allclose(impress_tpfa, solver2.A.todense())
-    impress_p = impress_p.reshape((20, 20, 20)).flatten()
+    #impress_p = impress_p.reshape((20, 20, 20)).flatten()
     #print(impress_tpfa[:3], solver2.A.todense()[:3])
     
     #assert np.allclose(impress_p, solver2.p)
@@ -316,16 +316,53 @@ def example_random(nvols):
                                           fd = fd, fn = fn,
                                           create_vtk=True, check=True)
     
-def example_comparative(nx = 100, ny = 100, nz = 1, check = False, create_vtk = True):
+def example_comparative(nx = 50, ny = 50, nz = 1, check = False, create_vtk = True):
     # Let p = sen(x) + 2 * cos(y) + 3 * tan(z)
     # grad(p) = (cos(x), -2 * sin(y), 3 / (cos(z) ** 2))
     # -div(gra(p)) = sin(x) - 2cos(y) + 6tan(z)sec²(z) = d
     # q = d * A * k
+    Lx, Ly, Lz = 100, 100, 1
+    dx, dy, dz = Lx/nx, Ly/ny, Lz/nz
+    x = np.linspace(dx, Lx - dx, nx)
+    y = np.linspace(dy, Ly - dy, ny)
+    z = np.linspace(dz, Lz - dz, nz)
+
+    K = 1
+    X, Y, Z = np.meshgrid(x, y, z, indexing = "ij")
+    p = np.sin(X) + 2 * np.cos(Y) 
+    d = np.sin(X) - 2 * np.cos(Y)
+    q = d * K * dx * dy * dz
+
+    Kt = solver.get_random_tensor(K, K, size = (nz, ny, nx))
+
+    all_indices = np.arange(nx * ny * nz)
+    left_border = all_indices[all_indices % nx == 0]
+    up_border = all_indices[nx * (ny - 1) <= all_indices  % (nx * ny)]
+    right_border = all_indices[all_indices % nx == nx - 1]
+    down_border = all_indices[(all_indices % (nx * ny)) < nx]
+    front_border = all_indices[all_indices < nx * ny]
+    back_border = all_indices[nx * ny * (nz - 1) <= all_indices]
+
+    fd = np.hstack((left_border, up_border, right_border, down_border, front_border, back_border))
+
+    fd = (fd, fd_values)
+
+    fn = np.empty()
+    fn_values = np.zeros((nx * ny * nz))
+    fn = (fn, fn_values)
+
+    axes = [(nx, dx), (ny, dy), (nz, dz)]
+    meshr, solverr = solver.simulate_tpfa(axes, "test e", K = Kt, q = q, 
+                                          fd = fd, fn = fn,
+                                          create_vtk=True, check=True)
     
-    pass
+    import matplotlib.pyplot as plt
+
+
+    
 if __name__ == '__main__':
     #Plot time x number of cells and number of cells x interation
     #do_time_tests()
-    all_examples(check=True, nx = 200, ny = 200, nz = 1)
+    all_examples(check=True, nx = 40, ny = 40, nz = 40)
     
     
