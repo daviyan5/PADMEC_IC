@@ -177,14 +177,14 @@ def example1(nx = 100, ny = 100, nz = 1, check = False, create_vtk = True):
     
 def example2(nx = 100, ny = 100, nz = 1, check = False, create_vtk = True):
     # Example 1
-    Lx, Ly, Lz = 20, 10, 0.000001
+    Lx, Ly, Lz = 20, 20, 20
     nx, ny, nz = nx, ny, nz
     dx, dy, dz = Lx/nx, Ly/ny, Lz/nz
     all_indices = np.arange(nx * ny * nz)
     k_time = time.time()
     K2 = solver.get_random_tensor(15., 15., size = (nz, ny, nx))
     K_left = [[50., 0., 0.], [0., 50., 0.], [0., 0., 50.]]
-    K2[:, :, : nx // 2] = K_left
+    K2[:, :, : 10] = K_left
     if solver.verbose: 
         print("Time to create K2: \t\t {} s".format(round(time.time() - k_time, 5)))
 
@@ -225,13 +225,27 @@ def example2(nx = 100, ny = 100, nz = 1, check = False, create_vtk = True):
     mesh2, solver2 = solver.simulate_tpfa([(nx, dx), (ny, dy), (nz, dz)], "example 2", K = K2, q = q,
                         fd = fd2, fn = fn2, create_vtk=create_vtk, check=check)
     
+    #compare with impress
+    impress_tpfa = np.load("./tmp/impress_tpfa.npy", allow_pickle=True)
+    impress_p = np.load("./tmp/impress_p.npy", allow_pickle=True)
+    impress_q = np.load("./tmp/impress_q.npy", allow_pickle=True)
+
+    print(impress_tpfa[0:3])
+    print(solver2.A.todense()[0:3])
+    #assert np.allclose(impress_tpfa, solver2.A.todense())
+    impress_p = impress_p.reshape((nx, ny, nz)).flatten()
+    
+    
+    #assert np.allclose(impress_p, solver2.p)
+    #assert np.allclose(impress_q, solver2.q)
+
     ## Plotar pressão por x
     if solver.verbose:
         print("-----------------------------------------------------------------------")
         print("Plotting pressure by x")
         from matplotlib import pyplot as plt
-        plt.plot(mesh2.volumes.x[:nx], solver2.p[:nx])
-        print(solver2.p[nx//2], solver2.p[nx - 1])
+        plt.plot(mesh2.volumes.x, solver2.p, "x")
+        plt.plot(mesh2.volumes.x, impress_p, "o")
         plt.grid()
         plt.show()
 
@@ -301,6 +315,6 @@ def example_random(nvols):
 if __name__ == '__main__':
     #Plot time x number of cells and number of cells x interation
     #do_time_tests()
-    all_examples(check=True, nx = 100, ny = 100, nz = 1)
+    all_examples(check=True, nx = 20, ny = 20, nz = 20)
     
     

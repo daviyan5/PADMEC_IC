@@ -148,21 +148,21 @@ class Solver:
         Kh = 2 / (1/K[:, :, 1:, 0, 0] + 1/K[:, :, :-1, 0, 0])
         Kh = np.insert(Kh,  0, K[:, :, 0, 0, 0], axis = 2)
         Kh = np.insert(Kh, Kh.shape[2], K[:, :, -1, 0, 0], axis = 2)
-        faces_trans_h = self.mesh.Sh * np.flip(Kh, 1).flatten() / self.mesh.dx / 2
+        faces_trans_h = self.mesh.Sh * np.flip(Kh, 1).flatten() / (self.mesh.dx) / 2
 
         faces_trans_l = np.empty((0))
         if(self.mesh.dimension > 1):
             Kl = 2 / (1/K[:, 1:, :, 1, 1] + 1/K[:, :-1, :, 1, 1])
             Kl = np.insert(Kl,  0, K[:, 0, :, 1, 1], axis = 1)
             Kl = np.insert(Kl, Kl.shape[1], K[:, -1, :, 1, 1], axis = 1)
-            faces_trans_l = self.mesh.Sl * np.flip(Kl, 1).flatten() / self.mesh.dy / 2
+            faces_trans_l = self.mesh.Sl * np.flip(Kl, 1).flatten() / (self.mesh.dy) / 2
 
         faces_trans_w = np.empty((0))
         if(self.mesh.dimension > 2):
             Kw = 2 / (1/K[1:, :, :, 2, 2] + 1/K[:-1, :, :, 2, 2])
             Kw = np.insert(Kw,  0, K[0, :, :, 2, 2], axis = 0)
             Kw = np.insert(Kw, Kw.shape[0], K[-1, :, :, 2, 2], axis = 0)
-            faces_trans_w = self.mesh.Sw * np.flip(Kw, 1).flatten() / self.mesh.dz / 2
+            faces_trans_w = self.mesh.Sw * np.flip(Kw, 1).flatten() / (self.mesh.dz) / 2
         
         self.faces_trans = np.hstack((faces_trans_h, faces_trans_l, faces_trans_w))
         self.faces_trans = np.hstack((-self.faces_trans, -self.faces_trans))
@@ -226,7 +226,6 @@ class Solver:
             print("No boundary conditions were set for mesh {}".format(self.mesh.name))
             return q
         start_time = time.time()
-       
         if bc == "dirichlet":
             
             
@@ -275,10 +274,7 @@ class Solver:
             q = csr_matrix(q).T
             start_time = time.time()
             self.p = pd_spsolve(self.A, q)
-        
-        #print(np.around(self.A.todense(), 3))
-        #print(np.around(q.todense().T[0], 3))
-        #print(np.around(self.p, 3))
+        np.set_printoptions(suppress=True)
         if check:
             check_time = time.time()
             assert np.allclose(self.A.dot(self.p), q.todense().T[0])
