@@ -31,7 +31,7 @@ class Mesh:
         self.volumes = None
         self.faces = None
 
-    def assemble_mesh(self, axis_attibutes, print_times = True, name = "Mesh " + str(np.random.randint(0, 1000))):
+    def assemble_mesh(self, axis_attibutes, verbose = True, name = "Mesh " + str(np.random.randint(0, 1000))):
         """
         Monta a malha de acordo com os atributos passados
 
@@ -74,16 +74,16 @@ class Mesh:
 
         volumes_time = time.time()
         self.volumes = Volumes(self)
-        if print_times: 
-            print("Time to assemble volumes in mesh {}: \t\t".format(self.name), round(time.time() - volumes_time, 5), "s")
+        if verbose: 
+            print("Time to assemble volumes: \t\t", round(time.time() - volumes_time, 5), "s")
         
         faces_time = time.time()
         self.faces = Faces(self)
-        if print_times: 
-            print("Time to assemble faces in mesh {}: \t\t".format(self.name), round(time.time() - faces_time, 5), "s")
+        if verbose: 
+            print("Time to assemble faces: \t\t", round(time.time() - faces_time, 5), "s")
 
-        if print_times: 
-            print("Time to assemble mesh {}: \t\t\t".format(self.name), round(time.time() - start_time, 5), "s")
+        if verbose: 
+            print("Time to assemble: \t\t\t", round(time.time() - start_time, 5), "s")
 
     def _is_internal_node(self, i, j, k, node_type):
         """
@@ -146,7 +146,11 @@ class Volumes:
         self.x, self.y, self.z = (self.i + 1/2) * self.dx, (self.j + 1/2) * self.dy, (self.k + 1/2) * self.dz
         self.internal = mesh._is_internal_node(self.i, self.j, self.k, "volume")
         self.boundary = np.logical_not(self.internal)
+        
+        self.internal = np.where(self.internal == True)[0]
+        self.boundary = np.where(self.boundary == True)[0]
 
+        self.volume = self.dx * self.dy * self.dz
         self.adjacentes = None
     
     def _get_index_from_coords(self, coords):

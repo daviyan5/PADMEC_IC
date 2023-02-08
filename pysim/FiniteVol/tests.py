@@ -1,64 +1,37 @@
 import numpy as np
-import matplotlib.pyplot as plt
 import time
 import os
 import math
 import solver
-import pickle
 
-from sklearn.neural_network import MLPRegressor
-from memory_profiler import profile
 from datetime import timedelta
 
-def create_estimator(fit_interations):
-    nvols = 2
-    max_value = 1.2e6
-    num_tests = 3
 
-    # Estimating max time with 3 order polynomial
-    nvols_increase = (max_value / nvols) ** (1 / fit_interations) 
-    x = np.append([2.], nvols * np.logspace(1, fit_interations, base = nvols_increase, num = fit_interations))
-    y = np.zeros(fit_interations + 1)
-    for i in range(fit_interations + 1):
-        for j in range(num_tests):
-            t = time.time()
-            example_random(int(x[i]))
-            y[i] += time.time() - t
-        y[i] /= num_tests
-        print("Iteration: {}/{} - {} x {}".format(i, fit_interations, y[i], num_tests))
-    
-    z = np.polyfit(x, y, 1)
-    p = np.poly1d(z)
-    estimated_max_time = p(x * num_tests).sum()
-    eta = int(estimated_max_time)
-    td = timedelta(seconds = eta if eta > 0 else 0)
-    print("Estimated max time: {}".format(td))
-    np.save("estimator", z)
 
-def plot_time(f):
-    nvols = 2
-    num_tests = 3
-    nvols_increase = 1.02
-    max_value = int(1.2e6)
+def time_tests(f, num_tests = 3, nvols = 2, nvols_increase = 1.004, max_value = int(1.05e6)):
     max_interations = int(np.log(max_value / nvols) / np.log(nvols_increase))
-    solver.print_times = False
+    solver.verbose = False
+    estimated_max_time = 0.
+    estimated_min_time = 0.
+    estimated_time = 0.
 
-    if not os.path.exists("estimator.npy"):
-        create_estimator(100)
-    z = np.load("estimator.npy")
-    p = np.poly1d(z)
-    x = np.append([2.], nvols * np.logspace(1, max_interations, base = nvols_increase, num = max_interations))
-    estimated_max_time = p(x * num_tests).sum()
+    if not os.path.exists("./important/estimator.npy"):
+        print("Estimator not found, will be created")
+    else:
+        z = np.load("./important/estimator.npy")
+        up = np.load("./important/up_estimator.npy")
+        low = np.load("./important/low_estimator.npy")
+        p = np.poly1d(z)
+        x = np.append([2.], nvols * np.logspace(1, max_interations, base = nvols_increase, num = max_interations))
+        estimated_time = (num_tests * p(x)).sum()
+        estimated_max_time = (num_tests * np.poly1d(up)(x)).sum()
+        estimated_min_time = (num_tests * np.poly1d(low)(x)).sum()
 
-    eta = int(estimated_max_time)
-    td = timedelta(seconds = eta if eta > 0 else 0)
-    print("Estimated max time: {}".format(td))
     
     times = []
     vols = []
-    iteration = np.arange(0, max_interations)
     
-    print(max_value, len(str(max_value)))
+    
     start_time = time.time()
     for i in range(max_interations + 1):
         total_time = 0
@@ -66,60 +39,101 @@ def plot_time(f):
             t = time.time()
             f(int(nvols))
             total_time += time.time() - t
-        
+
         times.append(total_time / num_tests)
         vols.append(int(nvols))
 
-        eta = int(estimated_max_time - (time.time() - start_time))
+        np.save("./tmp/times.npy", times)
+        np.save("./tmp/vols.npy", vols)
+
+        eta = int(estimated_time - (time.time() - start_time))
         td = timedelta(seconds = eta if eta > 0 else 0)
+
+        etamx = int(estimated_max_time - (time.time() - start_time))
+        tdmx = timedelta(seconds = etamx if etamx > 0 else 0)
+
+        etamn = int(estimated_min_time - (time.time() - start_time))
+        tdmn = timedelta(seconds = etamn if etamn > 0 else 0)
+
+        ##--------------- VERBOSE ---------------##
         str_i = str(i)
         str_nvols = str(int(nvols))
+
         #Add leading zeroes 
         str_i = "0" * (len(str(max_interations)) - len(str_i)) + str_i
         str_nvols = "0" * (len(str(max_value)) - len(str_nvols)) + str_nvols
         round_time = np.around(times[-1], 5)
         # Make sure len(str(round_time)) == 7
         round_time = str(round_time) + "0" * (7 - len(str(round_time)))
-        print("Iteration : {}/{} -- \t Vols: {} - {} x {} -- \t ETA: {}".format(str_i, max_interations, 
-                                                                                str_nvols, round_time, num_tests, td))
-        nvols *= nvols_increase
+        ##---------------------------------------##
+
+        print("Iteration : {}/{} -- \t Vols: {} - {} x {} -- \t ETA: {} -> MAX: {} -- MIN : {}".format(str_i, max_interations, 
+                                                                                                       str_nvols, round_time, 
+                                                                                                       num_tests, td, tdmx,tdmn))
+        nvols = nvols * nvols_increase
         
-    return vols, times, iteration
+    return vols, times
 
-def plot1D(mesh, solver, name):
-    pass
+def do_time_tests():
+    
+    vols, time = time_tests(example_random, 
+                           num_tests=3, nvols=2, nvols_increase=1.004, max_value=int(1e6))
 
-def compare():
-    names = ["volumes_trans","faces_trans", 
-             "A", "p",
-             "dirichlet_points", "dirichlet_values", 
-             "neumann_points", "neumann_values", "faces_adjacents"]
-    
-    for name in names:
-        legacy = np.load("legacy" + name + ".npy")
-        new = np.load(name + ".npy")
-        print("Comparing {}...".format(name))
-        print("Legacy: \t", legacy.shape)
-        print("New: \t\t", new.shape)
-        print("Equal: \t\t", np.array_equal(legacy, new))
-        print("-----------------------------------------------------------------------")
-    
-@profile
+   
+
+    # Create estimator if not already created
+    if not os.path.exists("./important/estimator.npy"):
+        # Fit linear model to time x vols
+        vols = np.load("./important/vols.npy")
+        times = np.load("./important/times.npy")
+
+        vols = np.array(vols)
+        times = np.array(times)
+        
+        # Fit linear model to time x vols
+        z = np.polyfit(vols, times, 1)
+        p = np.poly1d(z)
+       
+        np.save("./important/estimator.npy", z)
+        # Get the peak time every 20 num_vols and the corresponding number of cells
+        num_vols = 20
+        peaks = [[],[]]
+        valleys = [[],[]]
+
+        for i in range(0, len(times), num_vols):
+            peak = np.max(times[i:i+num_vols])
+            peaks[0].append(peak)
+            peaks[1].append(vols[i+np.argmax(times[i:i+num_vols])])
+
+            valley = np.min(times[i:i+num_vols])
+            valleys[0].append(valley)
+            valleys[1].append(vols[i+np.argmin(times[i:i+num_vols])])
+            
+        # Fit linear polynomial to the peaks
+        up_p = np.poly1d(np.polyfit(peaks[1], peaks[0], 1))
+        low_p = np.poly1d(np.polyfit(valleys[1], valleys[0], 1))
+        up_estimated = up_p(vols)
+        low_estimated = low_p(vols)
+        
+        
+        np.save("./important/up_estimator.npy", up_p)
+        np.save("./important/low_estimator.npy", low_p)
 def all_examples(nx = 100, ny = 100, nz = 1, check = False, create_vtk = True):
+    solver.verbose = True
     example1(nx, ny, nz, check)
     example2(nx, ny, nz, check)
-    example3(nx, ny, nz, check)
-
+    example_random(nvols = nx * ny * nz)
+    
 def example1(nx = 100, ny = 100, nz = 1, check = False, create_vtk = True):
     # Example 1
-    Lx, Ly, Lz = 20, 20, 20
+    Lx, Ly, Lz = 0.6, 1, 0.01
     nx, ny, nz = nx, ny, nz
     dx, dy, dz = Lx/nx, Ly/ny, Lz/nz
     all_indices = np.arange(nx * ny * nz)
 
     k_time = time.time()
     K1 = solver.get_random_tensor(52, 52, size = (nz, ny, nx))
-    if solver.print_times: 
+    if solver.verbose: 
         print("Time to create K1: \t\t {} s".format(round(time.time() - k_time, 5)))
 
     border_time = time.time()
@@ -130,83 +144,96 @@ def example1(nx = 100, ny = 100, nz = 1, check = False, create_vtk = True):
     down_border = all_indices[(all_indices % (nx * ny)) < nx]
     front_border = all_indices[all_indices < nx * ny]
     back_border = all_indices[nx * ny * (nz - 1) <= all_indices]
-    if solver.print_times: 
+    if solver.verbose: 
         print("Time to create borders: \t {} s".format(round(time.time() - border_time, 5)))
 
     d_time = time.time()
-    fd = np.full(fill_value = False, shape = (nx * ny * nz), dtype=bool)
-    fd[up_border] = fd[down_border] = fd[right_border] = True
+    fd = np.hstack((up_border, down_border, right_border))
+    
     fd_values = np.zeros((nx * ny * nz))
     fd_values[up_border] ,fd_values[down_border] ,fd_values[right_border] = 0, 100, 0
+   
+
     fd1 = (fd, fd_values)
-    if solver.print_times: 
+    if solver.verbose: 
         print("Time to create dirichlet: \t {} s".format(round(time.time() - d_time, 5)))
 
 
     n_time = time.time()
-    fn = np.full(fill_value = False, shape = (nx * ny * nz), dtype=bool)
-    fn[left_border] = True
+    fn = np.hstack((left_border))
     fn_values = np.zeros((nx * ny * nz))
     fn_values[left_border] = 0
+
     fn1 = (fn, fn_values)
-    if solver.print_times: 
+    if solver.verbose: 
         print("Time to create neumann: \t {} s".format(round(time.time() - n_time, 5)))
 
-    q = np.zeros((nx * ny * nz))
-    if solver.print_times:
+    q = np.full((nx * ny * nz), 0.)
+    if solver.verbose:
         print("-----------------------------------------------------------------------")
     mesh1, solver1 = solver.simulate_tpfa([(nx, dx), (ny, dy), (nz, dz)], "example 1", K = K1, q = q,
-                        fd = fd1, maskd = True, fn = fn1, maskn = True, create_vtk=create_vtk, check=check)
+                                          fd = fd1, fn = fn1, create_vtk=create_vtk, check=check)
 
+    
 def example2(nx = 100, ny = 100, nz = 1, check = False, create_vtk = True):
     # Example 1
-    Lx, Ly, Lz = 20, 10, 0.1
+    Lx, Ly, Lz = 20, 10, 0.000001
     nx, ny, nz = nx, ny, nz
     dx, dy, dz = Lx/nx, Ly/ny, Lz/nz
     all_indices = np.arange(nx * ny * nz)
     k_time = time.time()
-    K2 = solver.get_random_tensor(15, 15, size = (nz, ny, nx))
-    K_left = [[10., 0., 0.], [0., 50., 0.], [0., 0., 5.]]
+    K2 = solver.get_random_tensor(15., 15., size = (nz, ny, nx))
+    K_left = [[50., 0., 0.], [0., 50., 0.], [0., 0., 50.]]
     K2[:, :, : nx // 2] = K_left
-    if solver.print_times: 
+    if solver.verbose: 
         print("Time to create K2: \t\t {} s".format(round(time.time() - k_time, 5)))
 
     border_time = time.time()
-    
     left_border = all_indices[all_indices % nx == 0]
     up_border = all_indices[nx * (ny - 1) <= all_indices  % (nx * ny)]
     right_border = all_indices[all_indices % nx == nx - 1]
     down_border = all_indices[(all_indices % (nx * ny)) < nx]
     front_border = all_indices[all_indices < nx * ny]
     back_border = all_indices[nx * ny * (nz - 1) <= all_indices]
-    if solver.print_times: 
+    if solver.verbose: 
         print("Time to create borders: \t {} s".format(round(time.time() - border_time, 5)))
 
     d_time = time.time()
-    fd = np.full(fill_value = False, shape = (nx * ny * nz), dtype=bool)
-    fd[left_border] = fd[right_border] = True
+    fd = np.hstack((left_border, right_border))
+
     fd_values = np.zeros((nx * ny * nz))
-    fd_values[left_border], fd_values[right_border] = 100, 30
+    fd_values[left_border], fd_values[right_border] = 100., 30.
+
     fd2 = (fd, fd_values)
-    if solver.print_times: 
+    if solver.verbose: 
         print("Time to create dirichlet: \t {} s".format(round(time.time() - d_time, 5)))
 
 
     n_time = time.time()
-    fn = np.full(fill_value = False, shape = (nx * ny * nz), dtype=bool)
-    fn[up_border] = fn[down_border] = True
+    fn = np.hstack((up_border, down_border))
+    
     fn_values = np.zeros((nx * ny * nz))
-    fn_values[up_border] = fn_values[down_border] = 0
+    fn_values[up_border] = fn_values[down_border] = 0.
     fn2 = (fn, fn_values)
-    if solver.print_times: 
+    if solver.verbose: 
         print("Time to create neumann: \t {} s".format(round(time.time() - n_time, 5)))
 
     q = np.zeros((nx * ny * nz))
     
-    if solver.print_times:
+    if solver.verbose:
         print("-----------------------------------------------------------------------")
     mesh2, solver2 = solver.simulate_tpfa([(nx, dx), (ny, dy), (nz, dz)], "example 2", K = K2, q = q,
-                        fd = fd2, maskd = True, fn = fn2, maskn = True, create_vtk=create_vtk, check=check)
+                        fd = fd2, fn = fn2, create_vtk=create_vtk, check=check)
+    
+    ## Plotar pressão por x
+    if solver.verbose:
+        print("-----------------------------------------------------------------------")
+        print("Plotting pressure by x")
+        from matplotlib import pyplot as plt
+        plt.plot(mesh2.volumes.x[:nx], solver2.p[:nx])
+        print(solver2.p[nx//2], solver2.p[nx - 1])
+        plt.grid()
+        plt.show()
 
 def example_random(nvols):
     Lx, Ly, Lz = np.random.randint(1, 100), np.random.randint(1, 100), np.random.randint(1, 100)
@@ -246,54 +273,34 @@ def example_random(nvols):
                               (all_indices % (nx * ny) >= nx * (ny - 1)) | 
                               (all_indices < nx * ny) | 
                               (all_indices >= nx * ny * (nz - 1))]
-    fd = np.full(fill_value = False, shape = (nx * ny * nz), dtype=bool)
+    
     fd_indices = np.random.choice(all_borders, size = np.random.randint(1, len(all_borders)), replace = False)
     fn_indices = np.setdiff1d(all_borders, fd_indices)
 
-    fd[fd_indices] = True
     a,b = np.random.uniform(0, 100), np.random.uniform(0, 100)
-    fd_values = np.random.uniform(a, b, size = len(fd_indices))
-    fd = (fd, fd_values)
+    fd_values = np.zeros((nx * ny * nz))
+    fd_values[fd_indices] = np.random.uniform(a, b, size = len(fd_indices))
+    fd = (fd_indices, fd_values)
 
-    fn = np.full(fill_value = False, shape = (nx * ny * nz), dtype=bool)
-    fn[fn_indices] = True
+    
     a,b = np.random.uniform(0, 100), np.random.uniform(0, 100)
-    fn_values = np.random.uniform(a, b, size = len(fn_indices))
-    fn = (fn, fn_values)
+    fn_values = np.zeros((nx * ny * nz))
+    fn_values[fn_indices] = np.random.uniform(a, b, size = len(fn_indices))
+    fn = (fn_indices, fn_values)
 
     q = np.zeros((nx * ny * nz))
     a, b = np.random.uniform(0, 100), np.random.uniform(0, 100)
     q = np.random.uniform(1, 100, size = len(q))
+
     axes = [(nx, dx), (ny, dy), (nz, dz)]
     meshr, solverr = solver.simulate_tpfa(axes, "random e", K = K, q = q, 
-                                          fd = fd, maskd = True, fn = fn, maskn = True, 
-                                          create_vtk=False, check=False)
+                                          fd = fd, fn = fn,
+                                          create_vtk=True, check=True)
     
 
 if __name__ == '__main__':
     #Plot time x number of cells and number of cells x interation
-    vols1, time1, iterations1 = plot_time(example_random)
-
-    np.save("vols1", vols1)
-    np.save("time1", time1)
-    np.save("iterations1", iterations1)
-    # Create subplots
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5))
-    fig.suptitle('Time x Number of cells')
-
-    # Plot time x number of cells
-    ax1.plot(vols1, time1, label = "")
-    ax1.set_xlabel('Number of cells')
-    ax1.set_ylabel('Time (s)')
-    ax1.legend()
-    ax1.grid()
-
-    # Plot number of cells x iterations
-    ax2.plot(iterations1, vols1, label = "Example 1")
-    ax2.set_xlabel('Iterations')
-    ax2.set_ylabel('Number of cells')
-    ax2.legend()
-    ax2.grid()
+    #do_time_tests()
+    all_examples(check=True, nx = 100, ny = 100, nz = 1)
     
-
-    plt.show()
+    
