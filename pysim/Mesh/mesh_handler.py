@@ -30,6 +30,7 @@ class Mesh:
 
         self.volumes = None
         self.faces = None
+        self.times = {}
 
     def assemble_mesh(self, axis_attibutes, verbose = True, name = "Mesh " + str(np.random.randint(0, 1000))):
         """
@@ -74,16 +75,27 @@ class Mesh:
 
         volumes_time = time.time()
         self.volumes = Volumes(self)
+        self.times["assemble_volumes"] = round(time.time() - volumes_time, 5)
         if verbose: 
-            print("Time to assemble volumes: \t\t", round(time.time() - volumes_time, 5), "s")
+            print("Time to assemble volumes: \t\t", self.times["assemble_volumes"], "s")
         
         faces_time = time.time()
         self.faces = Faces(self)
+        self.times["assemble_faces"] = round(time.time() - faces_time, 5)
         if verbose: 
-            print("Time to assemble faces: \t\t", round(time.time() - faces_time, 5), "s")
+            print("Time to assemble faces: \t\t", self.times["assemble_faces"], "s")
 
-        if verbose: 
-            print("Time to assemble: \t\t\t", round(time.time() - start_time, 5), "s")
+
+        adjs_time = time.time()
+        self.volumes._assemble_adjacents(self)
+        self.faces._assemble_adjacents(self)
+        self.times["assemble_adjacents"] = round(time.time() - adjs_time, 5)
+        if verbose:
+            print("Time to assemble adjacents: \t\t", self.times["assemble_adjacents"], "s")
+        
+        self.times.assemble_mesh = round(time.time() - start_time, 5)
+        if verbose:
+            print("Time to assemble: \t\t\t", self.times["assemble_mesh"], "s")
 
     def _is_internal_node(self, i, j, k, node_type):
         """
@@ -151,8 +163,8 @@ class Volumes:
         self.boundary = np.where(self.boundary == True)[0]
 
         self.volume = self.dx * self.dy * self.dz
-        self.adjacentes = None
-    
+        self.adjacents = None
+        
     def _get_index_from_coords(self, coords):
         """
         Retorna o índice do volume a partir das coordenadas
@@ -179,6 +191,43 @@ class Volumes:
         return (np.all(x >= self.dx/2 & x <= (self.nx - 1/2) * self.dx) and
                 np.all(y >= self.dy/2 & y <= (self.ny - 1/2) * self.dy) and
                 np.all(z >= self.dz/2 & z <= (self.nz - 1/2) * self.dz))
+
+    def _assemble_adjacents(self, mesh):
+        
+        self.adjacents = np.zeros((self.nvols, 6), dtype=int)
+        vols = np.arange(self.nvols)
+        vols_coords = self._get_coords_from_index(vols)
+        vols_coords = vols_coords.T
+
+        self.adjacents[:] = self._get_adjacents_to_volume(mesh, vols_coords)
+
+    def _get_adjacents_to_volume(self, mesh, vols_coords):
+        n_ajd = 6 if mesh.dimension == 3 else 4 if mesh.dimension == 2 else 2
+        fx = np.array([np.array(vols_coords[:,0], copy=True) for i in range(n_ajd)])
+        fy = np.array([np.array(vols_coords[:,1], copy=True) for i in range(n_ajd)])
+        fz = np.array([np.array(vols_coords[:,2], copy=True) for i in range(n_ajd)])
+    
+
+        fx[0] += self.dx/2
+        fx[1] -= self.dx/2
+
+        if mesh.dimension >= 2:
+            fy[2] += self.dy/2
+            fy[3] -= self.dy/2
+
+            if mesh.dimension == 3:
+                fz[4] += self.dz/2
+                fz[5] -= self.dz/2
+
+        np.clip(fx, 0, (self.nx) * self.dx, out = fx)
+        np.clip(fy, 0, (self.ny) * self.dy, out = fy)
+        np.clip(fz, 0, (self.nz) * self.dz, out = fz)
+
+        hindexes = mesh.faces._get_index_from_coords((fx[0:2], fy[0:2], fz[0:2]), "hface")
+        lindexes = mesh.faces._get_index_from_coords((fx[2:4], fy[2:4], fz[2:4]), "lface")
+        windexes = mesh.faces._get_index_from_coords((fx[4:6], fy[4:6], fz[4:6]), "wface")
+
+        return np.hstack((hindexes.T, lindexes.T, windexes.T))
 
 class Faces:
     def __init__(self, mesh):
@@ -218,7 +267,6 @@ class Faces:
         self.boundary = np.logical_not(self.internal)
 
         self.adjacents = None
-        self._assemble_adjacents(mesh)
     
     def _get_coords_from_index(self, index):
         """
@@ -307,3 +355,7 @@ class Faces:
         v2 = mesh.volumes._get_index_from_coords((v2x, v2y, v2z))
         return np.array([v1, v2]).T
     
+if __name__ == "__main__":
+    axis = [[4,1], [4,1], [4,1]]
+    m = Mesh()
+    m.assemble_mesh(axis_attibutes = axis)

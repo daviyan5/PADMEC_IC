@@ -25,88 +25,8 @@ verbose = True
 def get_random_tensor(a, b, size, n = 3, m = 3):
     return tg.get_random_tensor(a, b, size, n, m)
 
-def simulate_tpfa(axis_attibutes, name, K = None, q = None, 
-                  fd = None, fn = None, dense = False, check = False, create_vtk = False):
-
-    """
-    Cria e simula uma malha.
-
-    axis_attibutes: lista de tuplas "(n, dx)" onde n é o número de volumes no eixo e dx é o tamanho do volume no eixo
-    name: nome da malha
-    
-    K: array de tensores de permeabilidade. shape = (nz, ny, nx, 3, 3)
-    
-    q: array de termos-fonte (nx * ny * nz). shape = (nz, ny, nx, 3, 3)
-   
-    fd: tupla (dirichlet_points, dirichlet_values) onde ->
-        dirichlet_points: é um array de indices que farão parte da condição de contorno Dirichlet
-        dirichlet_values: é um array de valores que serão atribuídos aos pontos de Dirichlet (em ordem de index)
-
-    
-    fn: tupla (neumann_points, neumann_values) onde ->
-        neumann_points: é um array de de indices que farão parte da condição de contorno Neumann
-        neumann_values: é um array de valores que serão atribuídos aos pontos de Neumann (em ordem de index)
-
-    
-    dense: booleano. caso seja True, a matriz de transmissibilidade será armazenada como uma matriz densa. 
-           Caso contrário, será armazenada como uma matriz esparsa.
-    
-    plot_options: tupla com as opções de plotagem (ver documentação da função plot_mesh).
-    
-    create_vtk: booleano. caso seja True, será criado um arquivo .vtk com os resultados da simulação.
-
-    """
-    warnings.filterwarnings("ignore", category=SparseEfficiencyWarning)
-    if verbose: print("Simulating {}...".format(name))
-    start_time = time.time()
-    mesh = Mesh()
-    mesh.assemble_mesh(axis_attibutes, verbose, name)
-    nx, ny, nz = mesh.nx, mesh.ny, mesh.nz
-    dx, dy, dz = mesh.dx, mesh.dy, mesh.dz
-    nvols = mesh.nvols
-
-    if K is None:
-        K = get_random_tensor(0, 1, size = (nz, ny, nx))
-    
-    if q is None:
-        q = np.zeros((nvols))
-    
-    if fd is None:
-        dirichlet_points = np.full(fill_value = False, shape = (nvols), dtype=bool)
-        dirichlet_points[0] = True
-        dirichlet_values = np.zeros((nvols))
-        dirichlet_values[0] = np.random.uniform(0, 1)
-        fd = (dirichlet_points, dirichlet_values)
-        
-
-    if fn is None:
-        neumann_points = np.full(fill_value = False, shape = (nvols), dtype=bool)
-        neumann_points[-1] = True
-        neumann_values = np.zeros((nvols))
-        neumann_values[-1] = np.random.uniform(0, 1)
-        fn = (neumann_points, neumann_values)
-        
-    
-    
-    solver = Solver(mesh)
-    solver.assemble_faces_transmissibilities(K)
-    solver.assemble_tpfa_matrix()
-    q = solver.set_boundary_conditions("dirichlet", fd, q)
-    q = solver.set_boundary_conditions("neumann", fn, q)
-    solver.solve_tpfa(q, dense, check)
-
-    n_vols_str = str(mesh.nvols)
-    n_vols_str = "0" * ((4 - len(n_vols_str)) if mesh.nvols < 1e4 else 0) + n_vols_str
-    if verbose: 
-        print("Time to simulate {} elements: \t {} s\n\n".format(n_vols_str, round(time.time() - start_time, 5)))
-
-    
-    if create_vtk:
-        solver.create_vtk()
-    
-    #solver.save_all()
-    return mesh, solver
-
+def get_tensor(a, size, n = 3, m = 3):
+    return tg.get_tensor(a, size, n, m)
 
 class Solver:
     def __init__(self, mesh):
@@ -166,8 +86,9 @@ class Solver:
         self.faces_trans = np.hstack((faces_trans_h, faces_trans_l, faces_trans_w))
         self.faces_trans = np.hstack((-self.faces_trans, -self.faces_trans))
 
+        mesh.times["assemble_faces_transmissibilities"] = round(time.time() - start_time, 5)
         if verbose: 
-            print("Time to assemble faces T: \t\t", round(time.time() - start_time, 5), "s")
+            print("Time to assemble faces T: \t\t", mesh.times["assemble_faces_transmissibilities"], "s")
     
     def assemble_tpfa_matrix(self):
         """
@@ -181,30 +102,24 @@ class Solver:
         row_index = np.hstack((row_index_p, col_index_p))
         col_index = np.hstack((col_index_p, row_index_p))
 
-        #equal_idx = np.where(row_index == col_index)[0]
-        #equal_idx = row_index[equal_idx]
-        #self.faces_trans[equal_idx] = 1.
-        
+       
         assert len(row_index) == len(col_index)
         assert len(row_index) == 2 * self.mesh.nfaces
         assert len(row_index) == len(self.faces_trans)
 
 
-        creation_time = time.time()
         self.A = csr_matrix((self.faces_trans, (row_index, col_index)), shape=(self.mesh.nvols, self.mesh.nvols))
-        if verbose: 
-            print("Time to create TPFA matrix: \t\t", round(time.time() - creation_time, 5), "s")
 
-    
         A = self.A.tolil()
         self.A.setdiag(0)
         self.A.setdiag(-self.A.sum(axis=1)) 
         A = self.A.tocsr()
         
+        mesh.times["assemble_tpfa_matrix"] = round(time.time() - start_time, 5)
         if verbose: 
-            print("Time to assemble TPFA matrix: \t\t", round(time.time() - start_time, 5), "s")
+            print("Time to assemble TPFA matrix: \t\t", mesh.times["assemble_tpfa_matrix"], "s")
     
-    def set_boundary_conditions(self, bc, f, q, function = False):
+    def set_boundary_conditions(self, bc, f, q):
         """
         Define as condições de contorno
 
@@ -213,50 +128,21 @@ class Solver:
         bc: str
             Tipo de condição de contorno
         f: tuple
-            Tupla com os indices dos volumes e os valores das condições de contorno
+            lambda f(x,y,z): valor
         q: np.array
             Vetor de fontes
-        function: bool
-            Se True, as condições de contorno serão aplicadas como uma função f(x, y, z)
-            f deve retornar None onde não há condição de contorno
         ----------
         """
-        if(f[0].shape[0] == 0):
-            print("No boundary conditions were set for mesh {}".format(self.mesh.name))
-            return q
+        
         start_time = time.time()
         if bc == "dirichlet":
-            
-            
-            indexes = None
-            if function:
-                # Get indexes of boundary volumes points (x,y,z) -> index
-                #TODO
-                pass
-            else:
-                self.dirichlet_points = np.unique(f[0])
-                self.dirichlet_values = f[1]
-                indexes = self.dirichlet_points
-            for i in indexes:
-                self.A.data[self.A.indptr[i] : self.A.indptr[i + 1]] = 0.
-            self.A[indexes, indexes] = 1.
-            
-            q[indexes] = self.dirichlet_values[indexes]
-
+            pass
         elif bc == "neumann":
-            indexes = None
-            if function:
-                # Get indexes of boundary volumes points (x,y,z) -> index
-                #TODO
-                pass
-            else:
-                self.neumann_points = np.unique(f[0])
-                self.neumann_values = f[1]
-                indexes = self.neumann_points
-            q[indexes] += self.neumann_values[indexes]
+           pass
         
+        mesh.times["set_boundary_conditions"] = round(time.time() - start_time, 5)
         if verbose: 
-            print("Time to set {} bc's: \t\t".format(bc), round(time.time() - start_time, 5), "s")
+            print("Time to set {} bc's: \t\t".format(bc), mesh.times["set_boundary_conditions"], "s")
         return q
 
     def solve_tpfa(self, q, dense = False, check = False):
@@ -279,8 +165,9 @@ class Solver:
             assert np.allclose(self.A.dot(self.p), q.todense().T[0])
             print("CHECK ({}): TPFA system solved correctly".format(round(time.time() - check_time,5)))
         
+        mesh.times["solve_tpfa"] = round(time.time() - start_time, 5)
         if verbose: 
-            print("Time to solve TPFA system: \t\t", round(time.time() - start_time, 5), "s")
+            print("Time to solve TPFA system: \t\t", mesh.times["solve_tpfa"], "s")
     
     def create_vtk(self):
         # Create the rectilinear grid

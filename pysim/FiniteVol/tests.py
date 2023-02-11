@@ -73,7 +73,6 @@ def time_tests(f, num_tests = 3, nvols = 2, nvols_increase = 1.004, max_value = 
         nvols = nvols * nvols_increase
         
     return vols, times
-
 def do_time_tests():
     
     vols, time = time_tests(example_random, 
@@ -123,7 +122,6 @@ def all_examples(nx = 100, ny = 100, nz = 100, check = False, create_vtk = True)
     example1(nx, ny, nz, check)
     example2(nx, ny, nz, check)
     example_random(nvols = nx * ny * nz)
-    
 def example1(nx = 10, ny = 10, nz = 10, check = False, create_vtk = True):
     # Example 1
     Lx, Ly, Lz = 0.6, 1, 0.00001
@@ -172,9 +170,7 @@ def example1(nx = 10, ny = 10, nz = 10, check = False, create_vtk = True):
     if solver.verbose:
         print("-----------------------------------------------------------------------")
     mesh1, solver1 = solver.simulate_tpfa([(nx, dx), (ny, dy), (nz, dz)], "example 1", K = K1, q = q,
-                                          fd = fd1, fn = fn1, create_vtk=create_vtk, check=check)
-
-    
+                                          fd = fd1, fn = fn1, create_vtk=create_vtk, check=check)    
 def example2(nx = 100, ny = 100, nz = 1, check = False, create_vtk = True):
     # Example 1
     Lx, Ly, Lz = 20, 20,20
@@ -253,7 +249,6 @@ def example2(nx = 100, ny = 100, nz = 1, check = False, create_vtk = True):
         print("Max error: {}".format(np.max(np.abs(solver2.p[:nx] - an_p))))
         plt.grid()
         plt.show()
-
 def example_random(nvols):
     Lx, Ly, Lz = np.random.randint(1, 100), np.random.randint(1, 100), np.random.randint(1, 100)
     part1 = np.random.randint(1, math.ceil(nvols ** (1/2)))
@@ -314,8 +309,7 @@ def example_random(nvols):
     axes = [(nx, dx), (ny, dy), (nz, dz)]
     meshr, solverr = solver.simulate_tpfa(axes, "random e", K = K, q = q, 
                                           fd = fd, fn = fn,
-                                          create_vtk=True, check=True)
-    
+                                          create_vtk=True, check=True)   
 def example_comparative(nx = 50, ny = 50, nz = 1, check = False, create_vtk = True):
     # Let p = sen(x) + 2 * cos(y) + 3 * tan(z)
     # grad(p) = (cos(x), -2 * sin(y), 3 / (cos(z) ** 2))
@@ -361,8 +355,6 @@ def example_comparative(nx = 50, ny = 50, nz = 1, check = False, create_vtk = Tr
 
     
 if __name__ == '__main__':
-    #Plot time x number of cells and number of cells x interation
-    #do_time_tests()
-    all_examples(check=True, nx = 40, ny = 40, nz = 40)
+    pass
     
     
