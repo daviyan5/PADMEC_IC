@@ -29,32 +29,35 @@ def get_tensor(a, size, n = 3, m = 3):
     return tg.get_tensor(a, size, n, m)
 
 class Solver:
-    def __init__(self, mesh):
-        self.mesh = mesh
+    def __init__(self):
         self.volumes_trans_tensor = None
         self.volumes_trans = None
         self.faces_trans = None
 
         self.A = None
+        self.b = None
         self.p = None
-
-        self.dirichlet_points = None
-        self.dirichlet_values = None
-        self.neumann_points = None
-        self.neumann_values = None
     
-    def save_all(self):
-        np.save("volumes_trans", self.volumes_trans)
-        np.save("faces_trans", self.faces_trans)
-        np.save("A", self.A.todense())
-        np.save("p", self.p)
-        np.save("dirichlet_points", self.dirichlet_points)
-        np.save("dirichlet_values", self.dirichlet_values)
-        np.save("neumann_points", self.neumann_points)
-        np.save("neumann_values", self.neumann_values)
-        np.save("faces_adjacents", self.mesh.faces_adjacents)
+    def create_mesh(self, nx, ny, nz, dx, dy, dz, name = "mesh"):
+        self.mesh = Mesh()
+        axis = [[nx, dx], [ny, dy], [nz, dz]]
+        self.mesh.assemble_mesh(axis, verbose, name = name)
+        return self.mesh
+        
+    def solve(self, mesh, K, q, fd, fn, create_vtk = False, check = False):
+        
+        self.mesh = mesh
+        self._assemble_faces_transmissibilities(K)
+        self._assemble_tpfa_matrix(q)
+        self._set_boundary_conditions("dirichlet", fd)
+        self._set_boundary_conditions("neumann", fn)
+        self._solve_tpfa(check=check)
+        if create_vtk:
+            self._create_vtk()
+        return self.p
 
-    def assemble_faces_transmissibilities(self, K):
+
+    def _assemble_faces_transmissibilities(self, K):
         """
         Monta as transmissibilidades das faces da malha
         """
@@ -67,30 +70,28 @@ class Solver:
         Kh = 2 / (1/K[:, :, 1:, 0, 0] + 1/K[:, :, :-1, 0, 0])
         Kh = np.insert(Kh,  0, K[:, :, 0, 0, 0], axis = 2)
         Kh = np.insert(Kh, Kh.shape[2], K[:, :, -1, 0, 0], axis = 2)
-        faces_trans_h = self.mesh.Sh * np.flip(Kh, 1).flatten() / (self.mesh.dx)
+        faces_trans_h = self.mesh.Sh * np.flip(Kh, 1).flatten() / (self.mesh.dx / 2)
 
         faces_trans_l = np.empty((0))
-        if(self.mesh.dimension > 1):
-            Kl = 2 / (1/K[:, 1:, :, 1, 1] + 1/K[:, :-1, :, 1, 1])
-            Kl = np.insert(Kl,  0, K[:, 0, :, 1, 1], axis = 1)
-            Kl = np.insert(Kl, Kl.shape[1], K[:, -1, :, 1, 1], axis = 1)
-            faces_trans_l = self.mesh.Sl * np.flip(Kl, 1).flatten() / (self.mesh.dy)
+        Kl = 2 / (1/K[:, 1:, :, 1, 1] + 1/K[:, :-1, :, 1, 1])
+        Kl = np.insert(Kl,  0, K[:, 0, :, 1, 1], axis = 1)
+        Kl = np.insert(Kl, Kl.shape[1], K[:, -1, :, 1, 1], axis = 1)
+        faces_trans_l = self.mesh.Sl * np.flip(Kl, 1).flatten() / (self.mesh.dy / 2)
 
         faces_trans_w = np.empty((0))
-        if(self.mesh.dimension > 2):
-            Kw = 2 / (1/K[1:, :, :, 2, 2] + 1/K[:-1, :, :, 2, 2])
-            Kw = np.insert(Kw,  0, K[0, :, :, 2, 2], axis = 0)
-            Kw = np.insert(Kw, Kw.shape[0], K[-1, :, :, 2, 2], axis = 0)
-            faces_trans_w = self.mesh.Sw * np.flip(Kw, 1).flatten() / (self.mesh.dz)
+        Kw = 2 / (1/K[1:, :, :, 2, 2] + 1/K[:-1, :, :, 2, 2])
+        Kw = np.insert(Kw,  0, K[0, :, :, 2, 2], axis = 0)
+        Kw = np.insert(Kw, Kw.shape[0], K[-1, :, :, 2, 2], axis = 0)
+        faces_trans_w = self.mesh.Sw * np.flip(Kw, 1).flatten() / (self.mesh.dz / 2)
         
         self.faces_trans = np.hstack((faces_trans_h, faces_trans_l, faces_trans_w))
         self.faces_trans = np.hstack((-self.faces_trans, -self.faces_trans))
 
-        mesh.times["assemble_faces_transmissibilities"] = round(time.time() - start_time, 5)
+        self.mesh.times["assemble_faces_transmissibilities"] = round(time.time() - start_time, 5)
         if verbose: 
-            print("Time to assemble faces T: \t\t", mesh.times["assemble_faces_transmissibilities"], "s")
+            print("Time to assemble faces T: \t\t", self.mesh.times["assemble_faces_transmissibilities"], "s")
     
-    def assemble_tpfa_matrix(self):
+    def _assemble_tpfa_matrix(self, q):
         """
         Monta a matriz de transmissibilidade TPFA
         """
@@ -109,17 +110,18 @@ class Solver:
 
 
         self.A = csr_matrix((self.faces_trans, (row_index, col_index)), shape=(self.mesh.nvols, self.mesh.nvols))
+        self.b = np.array(q, dtype=float)
 
-        A = self.A.tolil()
+        self.A = self.A.tolil()
         self.A.setdiag(0)
         self.A.setdiag(-self.A.sum(axis=1)) 
-        A = self.A.tocsr()
+        self.A = self.A.tocsr()
         
-        mesh.times["assemble_tpfa_matrix"] = round(time.time() - start_time, 5)
+        self.mesh.times["assemble_tpfa_matrix"] = round(time.time() - start_time, 5)
         if verbose: 
-            print("Time to assemble TPFA matrix: \t\t", mesh.times["assemble_tpfa_matrix"], "s")
+            print("Time to assemble TPFA matrix: \t\t", self.mesh.times["assemble_tpfa_matrix"], "s")
     
-    def set_boundary_conditions(self, bc, f, q):
+    def _set_boundary_conditions(self, bc, f):
         """
         Define as condições de contorno
 
@@ -128,24 +130,38 @@ class Solver:
         bc: str
             Tipo de condição de contorno
         f: tuple
-            lambda f(x,y,z): valor
-        q: np.array
-            Vetor de fontes
+            lambda f(x,y,z): valor da condição de contorno em cada ponto. f deve retornar um array de valores v
+            cujo tamanho é igual ao número de pontos de contorno. x, y e z são arrays de coordenadas dos pontos de contorno 1 : 1.
         ----------
         """
         
         start_time = time.time()
         if bc == "dirichlet":
-            pass
-        elif bc == "neumann":
-           pass
-        
-        mesh.times["set_boundary_conditions"] = round(time.time() - start_time, 5)
-        if verbose: 
-            print("Time to set {} bc's: \t\t".format(bc), mesh.times["set_boundary_conditions"], "s")
-        return q
+            x, y, z = self.mesh.faces._get_coords_from_index(self.mesh.faces.boundary)
+            index = self.mesh.faces.boundary
+            d_values = f(x, y, z)
+            d_nodes = index[np.where(d_values != None)[0]]
+            d_values = d_values[np.where(d_values != None)[0]]
+            volumes = self.mesh.faces.adjacents[d_nodes][:, 0]
 
-    def solve_tpfa(self, q, dense = False, check = False):
+           
+            self.A[volumes, volumes] -= self.faces_trans[d_nodes]
+
+            np.add.at(self.b, volumes, -d_values * self.faces_trans[d_nodes])
+
+        elif bc == "neumann":
+            x, y, z = self.mesh.faces._get_coords_from_index(self.mesh.faces.boundary)
+            n_values = f(x, y, z)
+            n_nodes = np.where(n_values != None)[0]
+            volumes = self.mesh.faces.adjacents[n_nodes][:, 0]
+            np.add.at(self.b, volumes, n_values[n_nodes])
+        
+        self.mesh.times["set_boundary_conditions - {}".format((bc))] = round(time.time() - start_time, 5)
+        if verbose: 
+            print("Time to set {} bc's: \t\t".format(bc), self.mesh.times["set_boundary_conditions - {}".format((bc))], "s")
+        
+
+    def _solve_tpfa(self, dense = False, check = False):
         """
         Resolve o sistema linear da malha
         """
@@ -153,23 +169,26 @@ class Solver:
         # Check if there's no intersection between dirichlet and neumann points
         if dense:
             self.A = self.A.todense()
-            self.p = np.linalg.solve(self.A, q)
+            self.p = np.linalg.solve(self.A, self.b)
         else:
             self.A.eliminate_zeros()
-            q = csr_matrix(q).T
             start_time = time.time()
-            self.p = pd_spsolve(self.A, q)
+            self.p = pd_spsolve(self.A, self.b)
         np.set_printoptions(suppress=True)
+        #print(self.A.todense())
+        #print(self.p)
+        #print(self.b)
         if check:
             check_time = time.time()
-            assert np.allclose(self.A.dot(self.p), q.todense().T[0])
+            assert np.allclose(self.A.dot(self.p), self.b)
             print("CHECK ({}): TPFA system solved correctly".format(round(time.time() - check_time,5)))
+
         
-        mesh.times["solve_tpfa"] = round(time.time() - start_time, 5)
+        self.mesh.times["solve_tpfa"] = round(time.time() - start_time, 5)
         if verbose: 
-            print("Time to solve TPFA system: \t\t", mesh.times["solve_tpfa"], "s")
+            print("Time to solve TPFA system: \t\t", self.mesh.times["solve_tpfa"], "s")
     
-    def create_vtk(self):
+    def _create_vtk(self):
         # Create the rectilinear grid
         grid = vtk.vtkImageData()
         grid.SetDimensions(self.mesh.nx + 1, self.mesh.ny + 1, self.mesh.nz + 1)

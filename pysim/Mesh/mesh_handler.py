@@ -17,15 +17,14 @@ class Mesh:
         """
         
         self.name = None
-
         self.axis_attibutes = None
-        self.dimension = None
 
         self.nx, self.ny, self.nz = 1, 1, 1
-        self.dx, self.dy, self.dz = 0, 0, 0
+        self.dx, self.dy, self.dz = 0., 0., 0.
 
         self.nhfaces, self.nlfaces, self.nwfaces = 0, 0, 0
-        self.Sh, self.Sl, self.Sw = 0, 0, 0
+        self.Sh, self.Sl, self.Sw = 0., 0., 0.
+        self.volume = 0.
         self.nvols, self.nfaces = 0, 0
 
         self.volumes = None
@@ -50,18 +49,18 @@ class Mesh:
         self.name = name
         #print("Creating mesh {} with {} elements".format(self.name, nvols)")
         self.axis_attibutes = axis_attibutes
-        self.dimension = len(axis_attibutes)
-        if(self.dimension > 3):
+        dimension = len(axis_attibutes)
+        if(dimension != 3):
             raise Exception("Número de eixos inválido")
 
         self.nx = axis_attibutes[0][0]
         self.dx = axis_attibutes[0][1]
 
-        self.ny = axis_attibutes[1][0] if self.dimension > 1 else 1
-        self.dy = axis_attibutes[1][1] if self.dimension > 1 else 1
+        self.ny = axis_attibutes[1][0] 
+        self.dy = axis_attibutes[1][1] 
 
-        self.nz = axis_attibutes[2][0] if self.dimension > 2 else 1
-        self.dz = axis_attibutes[2][1] if self.dimension > 2 else 1
+        self.nz = axis_attibutes[2][0] 
+        self.dz = axis_attibutes[2][1] 
         
         self.nvols = self._get_num_volumes()
         self.nfaces = self._get_num_faces()
@@ -69,6 +68,8 @@ class Mesh:
         self.Sh = self.dy * self.dz
         self.Sl = self.dx * self.dz
         self.Sw = self.dx * self.dy
+        self.volume = self.dx * self.dy * self.dz
+
         self.nhfaces = (self.nx + 1) * self.ny * self.nz
         self.nlfaces = self.nx * (self.ny + 1) * self.nz
         self.nwfaces = self.nx * self.ny * (self.nz + 1)
@@ -87,31 +88,25 @@ class Mesh:
 
 
         adjs_time = time.time()
-        self.volumes._assemble_adjacents(self)
+        #self.volumes._assemble_adjacents(self)
         self.faces._assemble_adjacents(self)
         self.times["assemble_adjacents"] = round(time.time() - adjs_time, 5)
         if verbose:
             print("Time to assemble adjacents: \t\t", self.times["assemble_adjacents"], "s")
         
-        self.times.assemble_mesh = round(time.time() - start_time, 5)
+        self.times["assemble_mesh"] = round(time.time() - start_time, 5)
         if verbose:
-            print("Time to assemble: \t\t\t", self.times["assemble_mesh"], "s")
+            print("Time to assemble mesh: \t\t\t", self.times["assemble_mesh"], "s")
 
     def _is_internal_node(self, i, j, k, node_type):
         """
         Retorna se o nó é interno ou não
         """
         if(node_type == "volume"):
-            if(self.dimension == 1):
-                return np.logical_and(i != 0, i != (self.nx - 1))
-            elif(self.dimension == 2):
-                return np.logical_and(np.logical_and(i != 0, i != (self.nx - 1)), 
-                                      np.logical_and(j != 0, j != (self.ny - 1)))
-            elif(self.dimension == 3):
-                return np.logical_and(np.logical_and(
-                                      np.logical_and(i != 0, i != (self.nx - 1)), 
-                                      np.logical_and(j != 0, j != (self.ny - 1))), 
-                                      np.logical_and(k != 0, k != (self.nz - 1)))
+            return np.logical_and(np.logical_and(
+                                    np.logical_and(i != 0, i != (self.nx - 1)), 
+                                    np.logical_and(j != 0, j != (self.ny - 1))), 
+                                    np.logical_and(k != 0, k != (self.nz - 1)))
         if(node_type == "hface"):
             return np.logical_and(i != 0, i != self.nx)
         if(node_type == "lface"):
@@ -123,12 +118,7 @@ class Mesh:
         """
         Retorna o número de volumes da malha
         """
-        if(self.dimension == 1):
-            return self.nx
-        elif(self.dimension == 2):
-            return self.nx * self.ny
-        elif(self.dimension == 3):
-            return self.nx * self.ny * self.nz
+        return self.nx * self.ny * self.nz
         
     def _get_num_faces(self):
         """
@@ -140,12 +130,7 @@ class Mesh:
         # 2D: nfaces = nx * ny + nx * (ny + 1) + ny * (nx + 1)
         # 3D: nfaces = nx * ny * nz + nx * ny * (nz + 1) + nx * (ny + 1) * nz + (nx + 1) * ny * nz
 
-        if(self.dimension == 1):
-            return self.nx + 1
-        elif(self.dimension == 2):
-            return self.nx * (self.ny + 1) + self.ny * (self.nx + 1)
-        elif(self.dimension == 3):
-            return self.nx * self.ny * (self.nz + 1) + self.nx * (self.ny + 1) * self.nz + (self.nx + 1) * self.ny * self.nz
+        return self.nx * self.ny * (self.nz + 1) + self.nx * (self.ny + 1) * self.nz + (self.nx + 1) * self.ny * self.nz
     
 class Volumes:
     def __init__(self, mesh):
@@ -202,7 +187,7 @@ class Volumes:
         self.adjacents[:] = self._get_adjacents_to_volume(mesh, vols_coords)
 
     def _get_adjacents_to_volume(self, mesh, vols_coords):
-        n_ajd = 6 if mesh.dimension == 3 else 4 if mesh.dimension == 2 else 2
+        n_ajd = 6 
         fx = np.array([np.array(vols_coords[:,0], copy=True) for i in range(n_ajd)])
         fy = np.array([np.array(vols_coords[:,1], copy=True) for i in range(n_ajd)])
         fz = np.array([np.array(vols_coords[:,2], copy=True) for i in range(n_ajd)])
@@ -211,13 +196,11 @@ class Volumes:
         fx[0] += self.dx/2
         fx[1] -= self.dx/2
 
-        if mesh.dimension >= 2:
-            fy[2] += self.dy/2
-            fy[3] -= self.dy/2
+        fy[2] += self.dy/2
+        fy[3] -= self.dy/2
 
-            if mesh.dimension == 3:
-                fz[4] += self.dz/2
-                fz[5] -= self.dz/2
+        fz[4] += self.dz/2
+        fz[5] -= self.dz/2
 
         np.clip(fx, 0, (self.nx) * self.dx, out = fx)
         np.clip(fy, 0, (self.ny) * self.dy, out = fy)
@@ -244,28 +227,40 @@ class Faces:
         self.i, self.j, self.k = index % (self.nx + 1), (index // (self.nx + 1)) % self.ny, (index // (self.nx + 1)) // self.ny
         self.x, self.y, self.z = self.i * self.dx, (self.j + 1/2) * self.dy, (self.k + 1/2) * self.dz
         self.internal = mesh._is_internal_node(self.i, self.j, self.k, "hface")
-        
-        if mesh.dimension > 1:
-            index = np.arange(self.nlfaces)
-            self.i = np.append(self.i, index % self.nx)
-            self.j = np.append(self.j, (index // self.nx) % (self.ny + 1))
-            self.k = np.append(self.k, (index // self.nx // (self.ny + 1)))
-            self.x = np.append(self.x, (self.i[-self.nlfaces:] + 1/2) * self.dx)
-            self.y = np.append(self.y, self.j[-self.nlfaces:] * self.dy)
-            self.z = np.append(self.z, (self.k[-self.nlfaces:] + 1/2) * self.dz)
-            self.internal = np.append(self.internal, mesh._is_internal_node(self.i, self.j, self.k, "lface"))
-            if mesh.dimension > 2:
-                index = np.arange(self.nwfaces)
-                self.i = np.append(self.i, index % self.nx)
-                self.j = np.append(self.j, (index // self.nx) % self.ny)
-                self.k = np.append(self.k, (index // self.nx // self.ny))
-                self.x = np.append(self.x, (self.i[-self.nwfaces:] + 1/2) * self.dx)
-                self.y = np.append(self.y, (self.j[-self.nwfaces:] + 1/2) * self.dy)
-                self.z = np.append(self.z, self.k[-self.nwfaces:] * self.dz)
-                self.internal = np.append(self.internal, mesh._is_internal_node(self.i, self.j, self.k, "wface"))
 
+        
+        index = np.arange(self.nlfaces)
+        self.i = np.append(self.i, index % self.nx)
+        self.j = np.append(self.j, (index // self.nx) % (self.ny + 1))
+        self.k = np.append(self.k, (index // self.nx // (self.ny + 1)))
+        self.x = np.append(self.x, (self.i[-self.nlfaces:] + 1/2) * self.dx)
+        self.y = np.append(self.y, self.j[-self.nlfaces:] * self.dy)
+        self.z = np.append(self.z, (self.k[-self.nlfaces:] + 1/2) * self.dz)
+        self.internal = np.append(self.internal, mesh._is_internal_node(self.i[self.nhfaces:], 
+                                                                        self.j[self.nhfaces:], 
+                                                                        self.k[self.nhfaces:], "lface"))
+        
+        
+        index = np.arange(self.nwfaces)
+        self.i = np.append(self.i, index % self.nx)
+        self.j = np.append(self.j, (index // self.nx) % self.ny)
+        self.k = np.append(self.k, (index // self.nx // self.ny))
+        self.x = np.append(self.x, (self.i[-self.nwfaces:] + 1/2) * self.dx)
+        self.y = np.append(self.y, (self.j[-self.nwfaces:] + 1/2) * self.dy)
+        self.z = np.append(self.z, self.k[-self.nwfaces:] * self.dz)
+        self.internal = np.append(self.internal, mesh._is_internal_node(self.i[self.nhfaces + self.nlfaces:], 
+                                                                        self.j[self.nhfaces + self.nlfaces:], 
+                                                                        self.k[self.nhfaces + self.nlfaces:], "wface"))
+        
         self.boundary = np.logical_not(self.internal)
 
+        self.internal = np.where(self.internal == True)[0]
+        self.boundary = np.where(self.boundary == True)[0]
+
+        self.areas = np.full((self.nfaces), 1.)
+        self.areas[:self.nhfaces] = mesh.Sh
+        self.areas[self.nhfaces:self.nhfaces + self.nlfaces] = mesh.Sl
+        self.areas[self.nhfaces + self.nlfaces:] = mesh.Sw
         self.adjacents = None
     
     def _get_coords_from_index(self, index):
@@ -307,21 +302,19 @@ class Faces:
 
         self.adjacents[:self.nhfaces] = self._get_adjacents_to_face(mesh, hfaces_coords, "hface")
 
-        if mesh.dimension >= 2:
-            lfaces = np.arange(self.nhfaces, self.nhfaces + self.nlfaces)
-            lfaces_coords = self._get_coords_from_index(lfaces)
-            lfaces_coords = lfaces_coords.T
-            assert lfaces_coords.shape == (self.nlfaces, 3)
+        lfaces = np.arange(self.nhfaces, self.nhfaces + self.nlfaces)
+        lfaces_coords = self._get_coords_from_index(lfaces)
+        lfaces_coords = lfaces_coords.T
+        assert lfaces_coords.shape == (self.nlfaces, 3)
 
-            self.adjacents[self.nhfaces:self.nhfaces + self.nlfaces] = self._get_adjacents_to_face(mesh, lfaces_coords, "lface")
+        self.adjacents[self.nhfaces:self.nhfaces + self.nlfaces] = self._get_adjacents_to_face(mesh, lfaces_coords, "lface")
 
-            if mesh.dimension == 3:
-                wfaces = np.arange(self.nhfaces + self.nlfaces, self.nhfaces + self.nlfaces + self.nwfaces)
-                wfaces_coords = self._get_coords_from_index(wfaces)
-                wfaces_coords = wfaces_coords.T
-                assert wfaces_coords.shape == (self.nwfaces, 3)
-                
-                self.adjacents[self.nhfaces + self.nlfaces:] = self._get_adjacents_to_face(mesh, wfaces_coords, "wface")
+        wfaces = np.arange(self.nhfaces + self.nlfaces, self.nhfaces + self.nlfaces + self.nwfaces)
+        wfaces_coords = self._get_coords_from_index(wfaces)
+        wfaces_coords = wfaces_coords.T
+        assert wfaces_coords.shape == (self.nwfaces, 3)
+        
+        self.adjacents[self.nhfaces + self.nlfaces:] = self._get_adjacents_to_face(mesh, wfaces_coords, "wface")
 
     def _get_adjacents_to_face(self, mesh, face_coords, face_type):
         """
