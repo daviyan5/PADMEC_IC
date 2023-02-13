@@ -76,27 +76,27 @@ class Mesh:
 
         volumes_time = time.time()
         self.volumes = Volumes(self)
-        self.times["assemble_volumes"] = round(time.time() - volumes_time, 5)
+        self.times["Criar Volumes"] = round(time.time() - volumes_time, 5)
         if verbose: 
-            print("Time to assemble volumes: \t\t", self.times["assemble_volumes"], "s")
+            print("Time to assemble volumes: \t\t", self.times["Criar Volumes"], "s")
         
         faces_time = time.time()
         self.faces = Faces(self)
-        self.times["assemble_faces"] = round(time.time() - faces_time, 5)
+        self.times["Criar Faces"] = round(time.time() - faces_time, 5)
         if verbose: 
-            print("Time to assemble faces: \t\t", self.times["assemble_faces"], "s")
+            print("Time to assemble faces: \t\t", self.times["Criar Faces"], "s")
 
 
         adjs_time = time.time()
         #self.volumes._assemble_adjacents(self)
         self.faces._assemble_adjacents(self)
-        self.times["assemble_adjacents"] = round(time.time() - adjs_time, 5)
+        self.times["Montar Adjacências"] = round(time.time() - adjs_time, 5)
         if verbose:
-            print("Time to assemble adjacents: \t\t", self.times["assemble_adjacents"], "s")
+            print("Time to assemble adjacents: \t\t", self.times["Montar Adjacências"], "s")
         
-        self.times["assemble_mesh"] = round(time.time() - start_time, 5)
+        self.times["Montar Malha"] = round(time.time() - start_time, 5)
         if verbose:
-            print("Time to assemble mesh: \t\t\t", self.times["assemble_mesh"], "s")
+            print("Time to assemble mesh: \t\t\t", self.times["Montar Malha"], "s")
 
     def _is_internal_node(self, i, j, k, node_type):
         """

@@ -87,9 +87,9 @@ class Solver:
         self.faces_trans = np.hstack((faces_trans_h, faces_trans_l, faces_trans_w))
         self.faces_trans = np.hstack((-self.faces_trans, -self.faces_trans))
 
-        self.mesh.times["assemble_faces_transmissibilities"] = round(time.time() - start_time, 5)
+        self.mesh.times["Montar Transmissibilidade das Faces"] = round(time.time() - start_time, 5)
         if verbose: 
-            print("Time to assemble faces T: \t\t", self.mesh.times["assemble_faces_transmissibilities"], "s")
+            print("Time to assemble faces T: \t\t", self.mesh.times["Montar Transmissibilidade das Faces"], "s")
     
     def _assemble_tpfa_matrix(self, q):
         """
@@ -109,6 +109,7 @@ class Solver:
         assert len(row_index) == len(self.faces_trans)
 
 
+        time_to_assemble = time.time()
         self.A = csr_matrix((self.faces_trans, (row_index, col_index)), shape=(self.mesh.nvols, self.mesh.nvols))
         self.b = np.array(q, dtype=float)
 
@@ -117,9 +118,9 @@ class Solver:
         self.A.setdiag(-self.A.sum(axis=1)) 
         self.A = self.A.tocsr()
         
-        self.mesh.times["assemble_tpfa_matrix"] = round(time.time() - start_time, 5)
+        self.mesh.times["Montar Matriz A do TPFA"] = round(time.time() - start_time, 5)
         if verbose: 
-            print("Time to assemble TPFA matrix: \t\t", self.mesh.times["assemble_tpfa_matrix"], "s")
+            print("Time to assemble TPFA matrix: \t\t", self.mesh.times["Montar Matriz A do TPFA"], "s")
     
     def _set_boundary_conditions(self, bc, f):
         """
@@ -156,9 +157,9 @@ class Solver:
             volumes = self.mesh.faces.adjacents[n_nodes][:, 0]
             np.add.at(self.b, volumes, n_values[n_nodes])
         
-        self.mesh.times["set_boundary_conditions - {}".format((bc))] = round(time.time() - start_time, 5)
+        self.mesh.times["Condição de contorno - {}".format((bc))] = round(time.time() - start_time, 5)
         if verbose: 
-            print("Time to set {} bc's: \t\t".format(bc), self.mesh.times["set_boundary_conditions - {}".format((bc))], "s")
+            print("Time to set {} bc's: \t\t".format(bc), self.mesh.times["Condição de contorno - {}".format((bc))], "s")
         
 
     def _solve_tpfa(self, dense = False, check = False):
@@ -184,11 +185,12 @@ class Solver:
             print("CHECK ({}): TPFA system solved correctly".format(round(time.time() - check_time,5)))
 
         
-        self.mesh.times["solve_tpfa"] = round(time.time() - start_time, 5)
+        self.mesh.times["Resolver o Sistema TPFA"] = round(time.time() - start_time, 5)
         if verbose: 
-            print("Time to solve TPFA system: \t\t", self.mesh.times["solve_tpfa"], "s")
+            print("Time to solve TPFA system: \t\t", self.mesh.times["Resolver o Sistema TPFA"], "s")
     
     def _create_vtk(self):
+        vtk_time = time.time()
         # Create the rectilinear grid
         grid = vtk.vtkImageData()
         grid.SetDimensions(self.mesh.nx + 1, self.mesh.ny + 1, self.mesh.nz + 1)
@@ -235,7 +237,10 @@ class Solver:
         writer = vtk.vtkDataSetWriter()
         writer.SetFileName("./tmp/{}_mesh.vtk".format(self.mesh.name))
         writer.SetInputData(grid)
-        writer.Write() 
+        writer.Write()
+        self.mesh.times["Criar arquivo VTK"] = round(time.time() - vtk_time, 5)
+        if verbose: 
+            print("Time to create vtk file: \t\t", self.mesh.times["Criar arquivo VTK"], "s")
 
 if __name__ == "__main__":
     main()
