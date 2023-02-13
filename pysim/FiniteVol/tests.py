@@ -139,7 +139,7 @@ def exemploAleatorio(nx, ny, nz):
 
 def testes_tempo():
     nvols0 = 10
-    nvolsMAX = int(3e5)
+    nvolsMAX = int(3e3)
     incremento = 1.05
     nvols0 = int(max(nvols0, 1/(incremento - 1) + 1))
     ntestes = 10
