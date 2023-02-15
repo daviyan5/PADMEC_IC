@@ -288,8 +288,10 @@ def testes_tempo():
         plt.savefig("./tmp/{}.png".format(f[i].__name__))
         #plt.show()
         print("Total Time for {}: \t {}".format(f[i].__name__, timedelta(seconds = time.time() - start_time)))
-    
-def testes_precisao():
+
+  
+def testes_precisao(solutions):
+    # Solutions = tuple([p0, g0, q0], [p1, g1, q1], ...)
     nvols0 = 10
     nvolsMAX = int(1e5)
     incremento = 1.2
@@ -298,7 +300,7 @@ def testes_precisao():
     tempos = np.zeros(ntestes)
     niteracoes = int(np.ceil(np.log(float(nvolsMAX)/nvols0) / np.log(incremento))) + 1
     
-    solver.verbose = False
+    solver.verbose = True
 
     
     def run_iterations(f, pa, ga, qa):
@@ -306,46 +308,76 @@ def testes_precisao():
         nvols = nvols0
         vols = []
         precisao_media = []
-        erro_quadratico = []
-        min_error = []
+        erro_medio = []
         max_error = []
 
         iter_time = time.time()
         for i in range(niteracoes):
-            str_i = "0" * (len(str(niteracoes)) - len(str(i))) + str(i)
+            str_i = "0" * (len(str(niteracoes)) - len(str(i + 1))) + str(i + 1)
             str_nvols = "0" * (len(str(nvolsMAX)) - len(str(nvols))) + str(nvols)
 
             
             nx, ny, nz = int(nvols ** (1/3)), int(nvols ** (1/3)), int(nvols ** (1/3))
             tempos_aux = np.empty(ntestes, dtype = object)
-            for j in range(ntestes):
-                mesh, solver = f(nx, ny, nz, pa, ga, qa)
-            
-            
+            mesh, solver = f(nx, ny, nz, pa, ga, qa)
+
+            p_a = pa(mesh.volumes.x, mesh.volumes.y, mesh.volumes.z)
+            error = np.abs((solver.p - p_a) / p_a)
+
+            precisao_media.append(np.mean(1. - error))
+            erro_medio.append(np.mean(error))
+            max_error.append(np.max(error))
+            vols.append(nvols)
 
             t_str = timedelta(seconds = time.time() - iter_time)
             print("Iteration : {}/{}  \t Vols: {} \t Total Time : {}".format(str_i, niteracoes, str_nvols, t_str))
-            vols.append(nvols)
-            precisao_media.append(np.mean(pa))
             nvols = int(nvols * incremento)
 
-        return tempos, vols
+        return precisao_media, erro_medio, max_error, vols
     
+    fig, ax = plt.subplots(len(solutions), 3, figsize = (10, 10))
+    fig.suptitle("Comparação com Soluções Analíticas")
+    for i, solution in enumerate(solutions):
+        start_time = time.time()
+        precisao, erro_medio, max_error, vols = run_iterations(exemploAnalitico, solution[0], solution[1], solution[2])
+        ax[i][0].plot(vols, precisao, label = "Precisão Média")
+        ax[i][1].plot(vols, erro_medio, label = "Erro Mínimo")
+        ax[i][2].plot(vols, max_error, label = "Erro Máximo")
+        ax[i][0].set_xlabel("Número de volumes")
+        ax[i][0].set_ylabel("Precisão")
+        ax[i][0].set_xscale("log")
+        ax[i][0].grid()
+        ax[i][0].legend()
+        ax[i][1].set_xlabel("Número de volumes")
+        ax[i][1].set_ylabel("Erro")
+        ax[i][1].set_xscale("log")
+        ax[i][1].grid()
+        ax[i][1].legend()
+        ax[i][2].set_xlabel("Número de volumes")
+        ax[i][2].set_ylabel("Erro")
+        ax[i][2].set_xscale("log")
+        ax[i][2].grid()
+        ax[i][2].legend()
+        print("Total Time : \t {}".format(timedelta(seconds = time.time() - start_time)))
     
+    plt.tight_layout()
+    plt.show()
 if __name__ == '__main__':
     solver.verbose = True
+    K_vols = 1.
     pa1 = lambda x, y, z: np.sin(x) + np.cos(y) + np.exp(z)
     ga1 = lambda x, y, z: np.array([np.cos(x), -np.sin(y), np.exp(z)]).T
     qa1 = lambda x, y, z: -K_vols * (-np.sin(x) - np.cos(y) + np.exp(z))
-    pa1 = lambda x, y, z: x**2 + y**2 + z**2
-    ga1 = lambda x, y, z: np.array([2*x, 2*y, 2*z]).T
-    qa1 = lambda x, y, z: -K_vols * (2) * np.ones_like(x)
+    pa2 = lambda x, y, z: x**2 + y**2 + z**2
+    ga2 = lambda x, y, z: np.array([2*x, 2*y, 2*z]).T
+    qa2 = lambda x, y, z: -K_vols * (2) * np.ones_like(x)
     
+    #testes_precisao([(pa1, ga1, qa1), (pa2, ga2, qa2)])
     #exemplo1D(1000, 10, 10)
     #exemplo2D(300, 300, 1)
     #exemplo3D(60, 60, 60)
     #exemploAleatorio(50,50,50)
-    #exemploAnalitico(50, 50, 50)
+    exemploAnalitico(30, 30, 30, pa1, ga1, qa1)
     #testes_tempo()
     
     
