@@ -150,12 +150,12 @@ def exemploAnalitico(nx, ny, nz):
     K_vols = 1.
     pa = lambda x, y, z: np.sin(x) + np.cos(y) + np.exp(z)
     ga = lambda x, y, z: np.array([np.cos(x), -np.sin(y), np.exp(z)]).T
-    qa = lambda x, y, z: K_vols * (-np.sin(x) - np.cos(y) + np.exp(z))
+    qa = lambda x, y, z: -K_vols * (-np.sin(x) - np.cos(y) + np.exp(z))
     normal = lambda x, y, z: meshA.faces.normal[meshA.faces.boundary]
 
     pa1 = lambda x, y, z: x**2 + y**2 + z**2
     ga1 = lambda x, y, z: np.array([2*x, 2*y, 2*z]).T
-    qa1 = lambda x, y, z: -K_vols * (2)
+    qa1 = lambda x, y, z: -K_vols * (2) * np.ones_like(x)
 
     q = qa(meshA.volumes.x, meshA.volumes.y, meshA.volumes.z) * meshA.volume
     # faces_flux = qa(meshA.faces.x, meshA.faces.y, meshA.faces.z) * meshA.faces.areas
@@ -165,7 +165,7 @@ def exemploAnalitico(nx, ny, nz):
     
     fd = lambda x, y, z: pa(x, y, z)
     fn = lambda x, y, z: (normal(x, y, z) * ga(x, y, z)).sum(axis = 1)
-
+    #np.zeros_like(x)#
     p = solverA.solve(meshA, K, q, fd, fn, create_vtk = solver.verbose, check = solver.verbose, an_sol=pa)
     
     if solver.verbose:
@@ -307,7 +307,7 @@ if __name__ == '__main__':
     #exemplo2D(300, 300, 1)
     #exemplo3D(60, 60, 60)
     #exemploAleatorio(50,50,50)
-    exemploAnalitico(100, 100, 100)
+    exemploAnalitico(50, 50, 50)
     #testes_tempo()
     
     

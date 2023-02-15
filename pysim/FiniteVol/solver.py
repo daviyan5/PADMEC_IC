@@ -156,7 +156,7 @@ class Solver:
             
             n_nodes = np.where(n_values != None)[0]
             volumes = self.mesh.faces.adjacents[n_nodes][:, 0]
-            self.b[volumes] += n_values[n_nodes] * self.mesh.faces.areas[n_nodes]
+            self.b[volumes] += n_values[n_nodes] * self.mesh.volume
         
         self.mesh.times["Condição de contorno - {}".format((bc))] = time.time() - start_time
         if verbose: 
