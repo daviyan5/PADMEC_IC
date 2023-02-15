@@ -135,16 +135,68 @@ def exemploAleatorio(nx, ny, nz):
     
     return meshA, solverA
 
+def exemploAnalitico(nx, ny, nz):
+    # P = sin(x) + cos(y) + e^(z)
+    #grad(p) = (cos(x), -sin(y), e^(z))
+    # div(K * grad(p)) = K * (-sen(x) - cos(y) + e^(z)
+    
+    Lx, Ly, Lz = 1, 2, 3
+    dx, dy, dz = Lx / nx, Ly / ny, Lz / nz
+
+    solverA = solver.Solver()
+    meshA = solverA.create_mesh(nx, ny, nz, dx, dy, dz, name = "exemploAnalitico")
+    nvols = meshA.nvols
+    K = solver.get_tensor(1., (nz, ny, nx))
+    K_vols = 1.
+    pa = lambda x, y, z: np.sin(x) + np.cos(y) + np.exp(z)
+    ga = lambda x, y, z: np.array([np.cos(x), -np.sin(y), np.exp(z)]).T
+    qa = lambda x, y, z: -K_vols * (-np.sin(x) - np.cos(y) + np.exp(z))
+    normal = lambda x, y, z: meshA.faces.normal[meshA.faces.boundary]
+
+    q = qa(meshA.volumes.x, meshA.volumes.y, meshA.volumes.z) * meshA.volume
+    # faces_flux = qa(meshA.faces.x, meshA.faces.y, meshA.faces.z) * meshA.faces.areas
+    # q = np.empty(nvols)
+    # np.add.at(q, meshA.faces.adjacents[:, 0], faces_flux)
+    # np.add.at(q, meshA.faces.adjacents[:, 1], -faces_flux)
+    
+    fd = lambda x, y, z: pa(x, y, z)
+    fn = lambda x, y, z: (normal(x, y, z) * ga(x, y, z)).sum(axis = 1)
+
+    p = solverA.solve(meshA, K, q, fd, fn, create_vtk = solver.verbose, check = solver.verbose)
+    
+    if solver.verbose:
+        # Plot 3D solution
+        x, y, z = meshA.volumes.x, meshA.volumes.y, meshA.volumes.z
+        fig = plt.figure()
+        ax = fig.add_subplot(121, projection='3d')
+        ax.scatter(x, y, z, c = p, cmap = 'jet')
+        ax.title.set_text('Solução numérica')
+        ax.set_xlabel('x')
+        ax.set_ylabel('y')
+        ax.set_zlabel('z')
+        
+        # Plot analytical solution
+        ax = fig.add_subplot(122, projection='3d')
+        ax.scatter(x, y, z, c = pa(x, y, z), cmap = 'jet')
+        ax.title.set_text('Solução analítica')
+        ax.set_xlabel('x')
+        ax.set_ylabel('y')
+        ax.set_zlabel('z')
+        solverA.p[:] = pa(x, y, z)
+        solverA._create_vtk("exemploAnalitico_A")
+        plt.show()
+
+    return meshA, solverA
 
 
 def testes_tempo():
     nvols0 = 10
-    nvolsMAX = int(3e3)
-    incremento = 1.05
+    nvolsMAX = int(1e5)
+    incremento = 1.2
     nvols0 = int(max(nvols0, 1/(incremento - 1) + 1))
-    ntestes = 10
+    ntestes = 100
     tempos = np.zeros(ntestes)
-    niteracoes = int(np.log(nvolsMAX/nvols0) / np.log(incremento))
+    niteracoes = int(np.ceil(np.log(float(nvolsMAX)/nvols0) / np.log(incremento))) + 1
     
     solver.verbose = False
 
@@ -158,8 +210,9 @@ def testes_tempo():
         # Tempos[i][3] = [MIN, MEDIO, MAX] -> Total
         nvols = nvols0
         vols = []
-        
 
+
+        iter_time = time.time()
         for i in range(niteracoes):
             str_i = "0" * (len(str(niteracoes)) - len(str(i))) + str(i)
             str_nvols = "0" * (len(str(nvolsMAX)) - len(str(nvols))) + str(nvols)
@@ -182,7 +235,7 @@ def testes_tempo():
             tempos[i][2][:] = [t3.min(), t3.mean(), t3.max()]
             tempos[i][3][:] = [t4.min(), t4.mean(), t4.max()]
 
-            t_str = timedelta(seconds = int(t4.sum()))
+            t_str = timedelta(seconds = time.time() - iter_time)
             print("Iteration : {}/{}  \t Vols: {} \t Total Time : {}".format(str_i, niteracoes, str_nvols, t_str))
             vols.append(nvols)
             nvols = int(nvols * incremento)
@@ -190,46 +243,56 @@ def testes_tempo():
     
     
     for i in range(len(f)):
+        start_time = time.time()
         tempos, vols = run_iterations(f[i])
-        vols = vols[1:]
         tempos = tempos[1:]
+        vols = vols[1:]
 
         fig, ax = plt.subplots(2, 2, figsize = (10, 5))
         plt.suptitle(f[i].__name__)
        
 
-        yerr_sup = tempos[:, :, 2] - tempos[:, :, 1]
-        yerr_inf = tempos[:, :, 1] - tempos[:, :, 0]
-        yerr = np.array([yerr_inf, yerr_sup])
-
-        ax[0][0].errorbar(vols, tempos[:, 3, 1], yerr = yerr[:,:,0], linestyle = "dotted", color = "black")
+        
+        ax[0][0].plot(vols, tempos[:, 3, 0], linestyle = "dotted", color = "black", label = "Mínimo")
+        ax[0][0].plot(vols, tempos[:, 3, 1], linestyle = "solid", color = "black", label = "Média")
+        ax[0][0].plot(vols, tempos[:, 3, 2], linestyle = "dashed", color = "black", label = "Máximo")
         ax[0][0].set_xlabel("Número de volumes")
         ax[0][0].set_ylabel("Tempo (s)")
         ax[0][0].grid()
+        ax[0][0].legend()
         ax[0][0].title.set_text("Total")
 
-        ax[0][1].errorbar(vols, tempos[:, 0, 1], yerr = yerr[:,:,1], linestyle = "dotted", color = "blue")
+        ax[0][1].plot(vols, tempos[:, 0, 0], linestyle = "dotted", color = "blue", label = "Mínimo")
+        ax[0][1].plot(vols, tempos[:, 0, 1], linestyle = "solid", color = "blue", label = "Média")
+        ax[0][1].plot(vols, tempos[:, 0, 2], linestyle = "dashed", color = "blue", label = "Máximo")
         ax[0][1].set_xlabel("Número de volumes")
         ax[0][1].set_ylabel("Tempo (s)")
         ax[0][1].grid()
+        ax[0][1].legend()
         ax[0][1].title.set_text("Montar Malha")
 
-        ax[1][0].errorbar(vols, tempos[:, 1, 1], yerr = yerr[:,:,2], linestyle = "dotted", color = "red")
+        ax[1][0].plot(vols, tempos[:, 1, 0], linestyle = "dotted", color = "red", label = "Mínimo")
+        ax[1][0].plot(vols, tempos[:, 1, 1], linestyle = "solid", color = "red", label = "Média")
+        ax[1][0].plot(vols, tempos[:, 1, 2], linestyle = "dashed", color = "red", label = "Máximo")
         ax[1][0].set_xlabel("Número de volumes")
         ax[1][0].set_ylabel("Tempo (s)")
         ax[1][0].grid()
+        ax[1][0].legend()
         ax[1][0].title.set_text("Montar Matriz A")
 
-        ax[1][1].errorbar(vols, tempos[:, 2, 1], yerr = yerr[:,:,3], linestyle = "dotted", color = "green")
+        ax[1][1].plot(vols, tempos[:, 2, 0], linestyle = "dotted", color = "green", label = "Mínimo")
+        ax[1][1].plot(vols, tempos[:, 2, 1], linestyle = "solid", color = "green", label = "Média")
+        ax[1][1].plot(vols, tempos[:, 2, 2], linestyle = "dashed", color = "green", label = "Máximo")
         ax[1][1].set_xlabel("Número de volumes")
         ax[1][1].set_ylabel("Tempo (s)")
         ax[1][1].grid()
+        ax[1][1].legend()
         ax[1][1].title.set_text("Resolver Sistema")
 
         plt.tight_layout()
         plt.savefig("./tmp/{}.png".format(f[i].__name__))
-        plt.show()
-        print("Total Time: {}".format(timedelta(seconds = int(tempos.sum()))))
+        #plt.show()
+        print("Total Time for {}: \t {}".format(f[i].__name__, timedelta(seconds = time.time() - start_time)))
     
     
     
@@ -239,6 +302,7 @@ if __name__ == '__main__':
     #exemplo2D(300, 300, 1)
     #exemplo3D(60, 60, 60)
     #exemploAleatorio(50,50,50)
-    testes_tempo()
+    exemploAnalitico(40, 40, 40)
+    #testes_tempo()
     
     

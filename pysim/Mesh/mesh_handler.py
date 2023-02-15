@@ -76,27 +76,27 @@ class Mesh:
 
         volumes_time = time.time()
         self.volumes = Volumes(self)
-        self.times["Criar Volumes"] = round(time.time() - volumes_time, 5)
+        self.times["Criar Volumes"] = time.time() - volumes_time
         if verbose: 
-            print("Time to assemble volumes: \t\t", self.times["Criar Volumes"], "s")
+            print("Time to assemble volumes: \t\t", round(self.times["Criar Volumes"], 5), "s")
         
         faces_time = time.time()
         self.faces = Faces(self)
-        self.times["Criar Faces"] = round(time.time() - faces_time, 5)
+        self.times["Criar Faces"] = time.time() - faces_time
         if verbose: 
-            print("Time to assemble faces: \t\t", self.times["Criar Faces"], "s")
+            print("Time to assemble faces: \t\t", round(self.times["Criar Faces"], 5), "s")
 
 
         adjs_time = time.time()
         #self.volumes._assemble_adjacents(self)
         self.faces._assemble_adjacents(self)
-        self.times["Montar Adjacências"] = round(time.time() - adjs_time, 5)
+        self.times["Montar Adjacências"] = time.time() - adjs_time
         if verbose:
-            print("Time to assemble adjacents: \t\t", self.times["Montar Adjacências"], "s")
+            print("Time to assemble adjacents: \t\t", round(self.times["Montar Adjacências"], 5), "s")
         
-        self.times["Montar Malha"] = round(time.time() - start_time, 5)
+        self.times["Montar Malha"] = time.time() - start_time
         if verbose:
-            print("Time to assemble mesh: \t\t\t", self.times["Montar Malha"], "s")
+            print("Time to assemble mesh: \t\t\t", round(self.times["Montar Malha"], 5), "s")
 
     def _is_internal_node(self, i, j, k, node_type):
         """
@@ -149,6 +149,7 @@ class Volumes:
 
         self.volume = self.dx * self.dy * self.dz
         self.adjacents = None
+        self.normal = None
         
     def _get_index_from_coords(self, coords):
         """
@@ -256,12 +257,20 @@ class Faces:
 
         self.internal = np.where(self.internal == True)[0]
         self.boundary = np.where(self.boundary == True)[0]
-
+        
         self.areas = np.full((self.nfaces), 1.)
         self.areas[:self.nhfaces] = mesh.Sh
         self.areas[self.nhfaces:self.nhfaces + self.nlfaces] = mesh.Sl
         self.areas[self.nhfaces + self.nlfaces:] = mesh.Sw
         self.adjacents = None
+        self.normal = np.empty((self.nfaces, 3))
+        self.normal[:self.nhfaces] = np.array([1, 0, 0])
+        #self.normal[self.nhfaces//2:self.nhfaces] = np.array([-1, 0, 0])
+        self.normal[self.nhfaces:self.nhfaces + self.nlfaces] = np.array([0, 1, 0])
+        #self.normal[self.nhfaces + self.nlfaces//2:self.nhfaces + self.nlfaces] = np.array([0, -1, 0])
+        self.normal[self.nhfaces + self.nlfaces:] = np.array([0, 0, 1])
+        #self.normal[self.nhfaces + self.nlfaces + self.nwfaces//2:] = np.array([0, 0, -1])
+
     
     def _get_coords_from_index(self, index):
         """
@@ -269,7 +278,7 @@ class Faces:
         """
         return np.array([self.x[index], self.y[index], self.z[index]])
 
-    def _get_index_from_coords(self, coords, face_type):
+    def _get_index_from_coords(self, coords, face_type = None):
         """
         Retorna o índice da face a partir das coordenadas
         """
