@@ -136,9 +136,9 @@ def exemploAleatorio(nx, ny, nz):
     return meshA, solverA
 
 def exemploAnalitico(nx, ny, nz):
-    # P = sin(x) + cos(y) + e^(z)
-    #grad(p) = (cos(x), -sin(y), e^(z))
-    # div(K * grad(p)) = K * (-sen(x) - cos(y) + e^(z)
+    # P = sin(x) + cos(y) + sen(x)
+    #grad(p) = (cos(x), -sin(y), cos(z))
+    # div(K * grad(p)) = K * (-sen(x) - cos(y) - sen(z))
     
     Lx, Ly, Lz = 1, 2, 3
     dx, dy, dz = Lx / nx, Ly / ny, Lz / nz
@@ -150,8 +150,12 @@ def exemploAnalitico(nx, ny, nz):
     K_vols = 1.
     pa = lambda x, y, z: np.sin(x) + np.cos(y) + np.exp(z)
     ga = lambda x, y, z: np.array([np.cos(x), -np.sin(y), np.exp(z)]).T
-    qa = lambda x, y, z: -K_vols * (-np.sin(x) - np.cos(y) + np.exp(z))
+    qa = lambda x, y, z: K_vols * (-np.sin(x) - np.cos(y) + np.exp(z))
     normal = lambda x, y, z: meshA.faces.normal[meshA.faces.boundary]
+
+    pa1 = lambda x, y, z: x**2 + y**2 + z**2
+    ga1 = lambda x, y, z: np.array([2*x, 2*y, 2*z]).T
+    qa1 = lambda x, y, z: -K_vols * (2)
 
     q = qa(meshA.volumes.x, meshA.volumes.y, meshA.volumes.z) * meshA.volume
     # faces_flux = qa(meshA.faces.x, meshA.faces.y, meshA.faces.z) * meshA.faces.areas
@@ -162,12 +166,13 @@ def exemploAnalitico(nx, ny, nz):
     fd = lambda x, y, z: pa(x, y, z)
     fn = lambda x, y, z: (normal(x, y, z) * ga(x, y, z)).sum(axis = 1)
 
-    p = solverA.solve(meshA, K, q, fd, fn, create_vtk = solver.verbose, check = solver.verbose)
+    p = solverA.solve(meshA, K, q, fd, fn, create_vtk = solver.verbose, check = solver.verbose, an_sol=pa)
     
     if solver.verbose:
         # Plot 3D solution
         x, y, z = meshA.volumes.x, meshA.volumes.y, meshA.volumes.z
         fig = plt.figure()
+        fig.suptitle('Erro Médio Quadrático: ' + str(np.mean((p - pa(x, y, z)) ** 2)))
         ax = fig.add_subplot(121, projection='3d')
         ax.scatter(x, y, z, c = p, cmap = 'jet')
         ax.title.set_text('Solução numérica')
@@ -182,9 +187,9 @@ def exemploAnalitico(nx, ny, nz):
         ax.set_xlabel('x')
         ax.set_ylabel('y')
         ax.set_zlabel('z')
-        solverA.p[:] = pa(x, y, z)
-        solverA._create_vtk("exemploAnalitico_A")
-        plt.show()
+        
+
+        plt.show() if nvols < 10000 else None
 
     return meshA, solverA
 
@@ -302,7 +307,7 @@ if __name__ == '__main__':
     #exemplo2D(300, 300, 1)
     #exemplo3D(60, 60, 60)
     #exemploAleatorio(50,50,50)
-    exemploAnalitico(40, 40, 40)
+    exemploAnalitico(100, 100, 100)
     #testes_tempo()
     
     

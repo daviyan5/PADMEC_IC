@@ -44,7 +44,7 @@ class Solver:
         self.mesh.assemble_mesh(axis, verbose, name = name)
         return self.mesh
         
-    def solve(self, mesh, K, q, fd, fn, create_vtk = False, check = False):
+    def solve(self, mesh, K, q, fd, fn, create_vtk = False, check = False, an_sol = None):
         
         self.mesh = mesh
         self._assemble_faces_transmissibilities(K)
@@ -53,7 +53,7 @@ class Solver:
         self._set_boundary_conditions("neumann", fn)
         self._solve_tpfa(check=check)
         if create_vtk:
-            self._create_vtk()
+            self._create_vtk(an_sol = an_sol)
         return self.p
 
 
@@ -145,10 +145,8 @@ class Solver:
             d_values = d_values[np.where(d_values != None)[0]]
             volumes = self.mesh.faces.adjacents[d_nodes][:, 0]
 
-           
             self.A[volumes, volumes] -= self.faces_trans[d_nodes]
-
-            np.add.at(self.b, volumes, -d_values * self.faces_trans[d_nodes])
+            self.b[volumes] -= d_values * self.faces_trans[d_nodes]
 
         elif bc == "neumann":
             x, y, z = self.mesh.faces._get_coords_from_index(self.mesh.faces.boundary)
@@ -158,7 +156,7 @@ class Solver:
             
             n_nodes = np.where(n_values != None)[0]
             volumes = self.mesh.faces.adjacents[n_nodes][:, 0]
-            np.add.at(self.b, volumes, n_values[n_nodes] * self.mesh.faces.areas[n_nodes])
+            self.b[volumes] += n_values[n_nodes] * self.mesh.faces.areas[n_nodes]
         
         self.mesh.times["Condição de contorno - {}".format((bc))] = time.time() - start_time
         if verbose: 
@@ -192,7 +190,7 @@ class Solver:
         if verbose: 
             print("Time to solve TPFA system: \t\t", round(self.mesh.times["Resolver o Sistema TPFA"],5), "s")
     
-    def _create_vtk(self, name = None):
+    def _create_vtk(self, name = None, an_sol = None):
         if name == None:
             name = self.mesh.name
         vtk_time = time.time()
@@ -235,7 +233,17 @@ class Solver:
         z_array = numpy_support.numpy_to_vtk(z, deep=True)
         z_array.SetName("Z")
         grid.GetCellData().AddArray(z_array)
-
+        
+        # Add analytical solution as point data + error
+        if an_sol is not None:
+            an_sol = an_sol(x, y, z)
+            an_sol_array = numpy_support.numpy_to_vtk(an_sol, deep=True)
+            an_sol_array.SetName("Analytical solution")
+            grid.GetCellData().AddArray(an_sol_array)
+            error = np.abs(self.p - an_sol)
+            error_array = numpy_support.numpy_to_vtk(error, deep=True)
+            error_array.SetName("Error")
+            grid.GetCellData().AddArray(error_array)
         
 
         # Write the rectilinear grid to a .vtk filea
