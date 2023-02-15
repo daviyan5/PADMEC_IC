@@ -25,24 +25,24 @@ def exemplo1D(nx, ny, nz):
     K[:, :, : nx // 2] = K_left
     q = np.full(nvols, vq)
 
-    fd = lambda x, y, z: np.where(x == 0, d1, np.where(x == Lx, d2, None))
-    fn = lambda x, y, z: np.where(x == 0, 0, np.where(x == Lx, 0, None))
+    fd = lambda x, y, z: np.where(x == 0., d1, np.where(x == Lx, d2, None))
+    fn = lambda x, y, z: np.where(y == 0., 0., np.where(y == Lx, 0., None))
 
-    p = solver1D.solve(mesh, K, q, fd, fn, create_vtk = solver.verbose, check = False)
+    a_p = lambda x, y, z : np.where(x < Lx/2, d1 - (d1 - d2) * (x / (Lx/2)) * (v1/(v1 + v2)), 
+                                             (d1 + (d1 - d2) * (v2 - v1)/(v1 + v2)) - (d1 - d2) * (x / (Lx/2)) * (v2/(v1+v2)))
+                                
+    p = solver1D.solve(mesh, K, q, fd, fn, create_vtk = solver.verbose, check = False, an_sol=a_p)
 
     x = mesh.volumes.x[:nx]
     
-
-    a_p = d1 - (d1 - d2) * (x[:nx//2] / (Lx/2)) * (v1/(v1 + v2))
-    a_p = np.hstack((a_p, 
-                    (d1 + (d1 - d2) * (v2 - v1)/(v1 + v2)) - (d1 - d2) * (x[nx//2:] / (Lx/2)) * (v2/(v1+v2)) ))
+    
     
     if solver.verbose:
         plt.plot(x, p[:nx], label = "TPFA")
         plt.title("Solução 1D - Caso Linear com {} elementos".format(nvols))
-        plt.plot(x, a_p, label = "Analítico")
-        plt.plot(x, np.abs(a_p - p[:nx]), label = "Erro")
-        plt.text(0.7, 0.7, "Erro máximo: {}".format(np.max(np.abs(a_p - p[:nx]))))
+        plt.plot(x, a_p(x,None,None), label = "Analítico")
+        plt.plot(x, np.abs(a_p(x, None, None) - p[:nx]), label = "Erro")
+        plt.text(0.7, 0.7, "Erro máximo: {}".format(np.max(np.abs(a_p(x, None, None) - p[:nx]))))
         plt.legend()
         plt.xlabel("x")
         plt.ylabel("p")
@@ -135,7 +135,7 @@ def exemploAleatorio(nx, ny, nz):
     
     return meshA, solverA
 
-def exemploAnalitico(nx, ny, nz):
+def exemploAnalitico(nx, ny, nz, pa, ga, qa):
     # P = sin(x) + cos(y) + sen(x)
     #grad(p) = (cos(x), -sin(y), cos(z))
     # div(K * grad(p)) = K * (-sen(x) - cos(y) - sen(z))
@@ -148,20 +148,10 @@ def exemploAnalitico(nx, ny, nz):
     nvols = meshA.nvols
     K = solver.get_tensor(1., (nz, ny, nx))
     K_vols = 1.
-    pa = lambda x, y, z: np.sin(x) + np.cos(y) + np.exp(z)
-    ga = lambda x, y, z: np.array([np.cos(x), -np.sin(y), np.exp(z)]).T
-    qa = lambda x, y, z: -K_vols * (-np.sin(x) - np.cos(y) + np.exp(z))
+    
     normal = lambda x, y, z: meshA.faces.normal[meshA.faces.boundary]
 
-    pa1 = lambda x, y, z: x**2 + y**2 + z**2
-    ga1 = lambda x, y, z: np.array([2*x, 2*y, 2*z]).T
-    qa1 = lambda x, y, z: -K_vols * (2) * np.ones_like(x)
-
     q = qa(meshA.volumes.x, meshA.volumes.y, meshA.volumes.z) * meshA.volume
-    # faces_flux = qa(meshA.faces.x, meshA.faces.y, meshA.faces.z) * meshA.faces.areas
-    # q = np.empty(nvols)
-    # np.add.at(q, meshA.faces.adjacents[:, 0], faces_flux)
-    # np.add.at(q, meshA.faces.adjacents[:, 1], -faces_flux)
     
     fd = lambda x, y, z: pa(x, y, z)
     fn = lambda x, y, z: (normal(x, y, z) * ga(x, y, z)).sum(axis = 1)
@@ -299,15 +289,63 @@ def testes_tempo():
         #plt.show()
         print("Total Time for {}: \t {}".format(f[i].__name__, timedelta(seconds = time.time() - start_time)))
     
+def testes_precisao():
+    nvols0 = 10
+    nvolsMAX = int(1e5)
+    incremento = 1.2
+    nvols0 = int(max(nvols0, 1/(incremento - 1) + 1))
+    ntestes = 1
+    tempos = np.zeros(ntestes)
+    niteracoes = int(np.ceil(np.log(float(nvolsMAX)/nvols0) / np.log(incremento))) + 1
+    
+    solver.verbose = False
+
+    
+    def run_iterations(f, pa, ga, qa):
+        
+        nvols = nvols0
+        vols = []
+        precisao_media = []
+        erro_quadratico = []
+        min_error = []
+        max_error = []
+
+        iter_time = time.time()
+        for i in range(niteracoes):
+            str_i = "0" * (len(str(niteracoes)) - len(str(i))) + str(i)
+            str_nvols = "0" * (len(str(nvolsMAX)) - len(str(nvols))) + str(nvols)
+
+            
+            nx, ny, nz = int(nvols ** (1/3)), int(nvols ** (1/3)), int(nvols ** (1/3))
+            tempos_aux = np.empty(ntestes, dtype = object)
+            for j in range(ntestes):
+                mesh, solver = f(nx, ny, nz, pa, ga, qa)
+            
+            
+
+            t_str = timedelta(seconds = time.time() - iter_time)
+            print("Iteration : {}/{}  \t Vols: {} \t Total Time : {}".format(str_i, niteracoes, str_nvols, t_str))
+            vols.append(nvols)
+            precisao_media.append(np.mean(pa))
+            nvols = int(nvols * incremento)
+
+        return tempos, vols
     
     
 if __name__ == '__main__':
     solver.verbose = True
-    #exemplo1D(1000, 1, 1)
+    pa1 = lambda x, y, z: np.sin(x) + np.cos(y) + np.exp(z)
+    ga1 = lambda x, y, z: np.array([np.cos(x), -np.sin(y), np.exp(z)]).T
+    qa1 = lambda x, y, z: -K_vols * (-np.sin(x) - np.cos(y) + np.exp(z))
+    pa1 = lambda x, y, z: x**2 + y**2 + z**2
+    ga1 = lambda x, y, z: np.array([2*x, 2*y, 2*z]).T
+    qa1 = lambda x, y, z: -K_vols * (2) * np.ones_like(x)
+    
+    #exemplo1D(1000, 10, 10)
     #exemplo2D(300, 300, 1)
     #exemplo3D(60, 60, 60)
     #exemploAleatorio(50,50,50)
-    exemploAnalitico(50, 50, 50)
+    #exemploAnalitico(50, 50, 50)
     #testes_tempo()
     
     

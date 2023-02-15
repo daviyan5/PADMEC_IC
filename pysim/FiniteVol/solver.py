@@ -141,10 +141,9 @@ class Solver:
             x, y, z = self.mesh.faces._get_coords_from_index(self.mesh.faces.boundary)
             index = self.mesh.faces.boundary
             d_values = f(x, y, z)
-            d_nodes = index[np.where(d_values != None)[0]]
-            d_values = d_values[np.where(d_values != None)[0]]
+            d_nodes = index[d_values != None]
+            d_values = d_values[d_values != None].astype(float)
             volumes = self.mesh.faces.adjacents[d_nodes][:, 0]
-
             self.A[volumes, volumes] -= self.faces_trans[d_nodes]
             self.b[volumes] -= d_values * self.faces_trans[d_nodes]
 
@@ -153,10 +152,11 @@ class Solver:
             n_values = f(x, y, z)
             if n_values is None:
                 return
-            
-            n_nodes = np.where(n_values != None)[0]
+            index = self.mesh.faces.boundary
+            n_nodes  = index[n_values != None]
+            n_values = n_values[n_values != None].astype(float)
             volumes = self.mesh.faces.adjacents[n_nodes][:, 0]
-            self.b[volumes] += n_values[n_nodes] * self.mesh.volume
+            self.b[volumes] += n_values * self.mesh.volume
         
         self.mesh.times["Condição de contorno - {}".format((bc))] = time.time() - start_time
         if verbose: 
@@ -215,11 +215,11 @@ class Solver:
             else:
                 norm = (p - p.min()) / (p.max() - p.min())
             pressure_array = numpy_support.numpy_to_vtk(norm, deep=True)
-            pressure_array.SetName("Pressure normalized")
+            pressure_array.SetName("Numerical Pressure normalized")
             grid.GetCellData().AddArray(pressure_array)
         else:
             pressure_array = numpy_support.numpy_to_vtk(self.p, deep=True)
-            pressure_array.SetName("Pressure")
+            pressure_array.SetName("Numerical Pressure")
             grid.GetCellData().AddArray(pressure_array)
 
         # Add coordinates as point data
@@ -238,7 +238,7 @@ class Solver:
         if an_sol is not None:
             an_sol = an_sol(x, y, z)
             an_sol_array = numpy_support.numpy_to_vtk(an_sol, deep=True)
-            an_sol_array.SetName("Analytical solution")
+            an_sol_array.SetName("Analytical Pressure")
             grid.GetCellData().AddArray(an_sol_array)
             error = np.abs(self.p - an_sol)
             error_array = numpy_support.numpy_to_vtk(error, deep=True)
