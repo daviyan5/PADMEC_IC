@@ -150,6 +150,7 @@ class Volumes:
         self.volume = self.dx * self.dy * self.dz
         self.adjacents = None
         self.normal = None
+        self.volumes = np.full(self.nvols, self.volume)
         
     def _get_index_from_coords(self, coords):
         """

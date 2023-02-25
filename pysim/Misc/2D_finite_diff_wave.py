@@ -69,6 +69,14 @@ def plotheatmap(u_k, k, dt):
 def animate(k, u, dt):
         plotheatmap(u[k], k, dt)
 
+def image_to_numpy(image):
+    from PIL import Image
+    import numpy as np
+    im = Image.open(image)
+    im = im.convert('L')
+    im = im.resize((200, 200))
+    im = np.array(im)
+    return im
 
 def main():
     # Grid parameters
@@ -89,8 +97,7 @@ def main():
 
     # Initial conditions
     u = np.empty((nt, nx, ny))
-    u0 = np.load("../Random/image_array.npy")
-    u0 = np.zeros((nx, ny))
+    u0 = image_to_numpy("./Misc/silk.jpg")
     # Rotate 180 degrees
     u0 = np.rot90(u0, 2)
     u[0] = u0

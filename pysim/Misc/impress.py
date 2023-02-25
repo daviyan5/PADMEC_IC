@@ -72,7 +72,6 @@ def main():
     Ns = 0.5 * np.cross(I - J, K - J)
     Ns_norm = np.linalg.norm(Ns, axis=1)
 
-    n_vols_pairs = len(mesh.faces.internal)
 
     lvols = in_vols_pairs[:, 0]
     rvols = in_vols_pairs[:, 1]

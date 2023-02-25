@@ -6,21 +6,21 @@ import solver
 import matplotlib.pyplot as plt
 from datetime import timedelta
 
-def exemplo1D(nx, ny, nz):
+def exemplo1D(meshfile):
 
-    Lx, Ly, Lz = 10, 10, 10
-    dx, dy, dz = Lx / nx, Ly / ny, Lz / nz
+    Lx, Ly, Lz = 20, 20, 20
     solver1D = solver.Solver()
-    mesh = solver1D.create_mesh(nx, ny, nz, dx, dy, dz, name = "exemplo1D")
-    nvols = mesh.nvols
+    mesh = solver1D.create_mesh(meshfile)
+    nvols = len(mesh.volumes)
 
     v1, v2 = 15., 100.
     d1, d2 = 100., 30.
     vq = 0.
 
-    K = solver.get_tensor(v1, (nz, ny, nx))
+    x = mesh.volumes.center[:][:, 0]
+    K = solver.get_tensor(v1, (nvols))
     K_left = solver.get_tensor(v2, ())
-    K[:, :, : nx // 2] = K_left
+    K[x < Lx / 2] = K_left
     q = np.full(nvols, vq)
 
     fd = lambda x, y, z: np.where(x == 0., d1, np.where(x == Lx, d2, None))
@@ -31,22 +31,6 @@ def exemplo1D(nx, ny, nz):
                                 
     p = solver1D.solve(mesh, K, q, fd, fn, create_vtk = solver.verbose, check = False, an_sol=a_p)
 
-    x = mesh.volumes.x[:nx]
-    
-    
-    
-    if solver.verbose:
-        plt.plot(x, p[:nx], label = "TPFA")
-        plt.title("Solução 1D - Caso Linear com {} elementos".format(nvols))
-        plt.plot(x, a_p(x,None,None), label = "Analítico")
-        plt.plot(x, np.abs(a_p(x, None, None) - p[:nx]), label = "Erro")
-        plt.text(0.7, 0.7, "Erro máximo: {}".format(np.max(np.abs(a_p(x, None, None) - p[:nx]))))
-        plt.legend()
-        plt.xlabel("x")
-        plt.ylabel("p")
-
-        plt.grid()
-        plt.show()
     
     return mesh, solver1D
 
@@ -348,15 +332,13 @@ def testes_precisao(solutions, K_vols):
 
 if __name__ == '__main__':
     solver.verbose = True
-    
-    exemplo1D(20, 20, 20)
+    meshfile = "./mesh/20.h5m"
+    exemplo1D(meshfile)
     #exemplo2D(300, 300, 1)
     #exemplo3D(60, 60, 60)
     #exemploAleatorio(50,50,50)
     #exemploAnalitico(30, 30, 30, pa1, ga1, qa1, K_vols)
     #testes_tempo()
-
-    exit()
     K_vols = 112.435
     pa1 = lambda x, y, z: np.sin(x) + np.cos(y) + np.exp(z)
     ga1 = lambda x, y, z: np.array([np.cos(x), -np.sin(y), np.exp(z)]).T
@@ -365,5 +347,6 @@ if __name__ == '__main__':
     ga2 = lambda x, y, z: np.array([2*x, 2*y, 2*z]).T
     qa2 = lambda x, y, z: -K_vols * (2) * np.ones_like(x)
     print("Testes de Precisão")
-    testes_precisao([(pa1, ga1, qa1), (pa2, ga2, qa2)], K_vols)
+    #testes_precisao([(pa1, ga1, qa1), (pa2, ga2, qa2)], K_vols)
+    
     
