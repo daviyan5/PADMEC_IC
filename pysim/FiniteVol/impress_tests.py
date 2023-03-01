@@ -34,20 +34,19 @@ def exemplo1D(meshfile):
     
     return mesh, solver1D
 
-def exemplo2D(nx, ny, nz):
+def exemplo2D(meshfile):
     
-    Lx, Ly, Lz = 0.6, 1, 0.01
-    dx, dy, dz = Lx / nx, Ly / ny, Lz / nz
+    Lx, Ly, Lz = 20, 20, 20
 
     solver2D = solver.Solver()
-    mesh = solver2D.create_mesh(nx, ny, nz, dx, dy, dz, name = "exemplo2D")
-    nvols = mesh.nvols
+    mesh = solver2D.create_mesh(meshfile)
+    nvols = len(mesh.volumes)
 
     v1 = 52.
     d1, d2, d3 = 0., 100., 0.
     vq = 0.
 
-    K = solver.get_tensor(v1, (nz, ny, nx))
+    K = solver.get_tensor(v1, (nvols))
     q = np.full(nvols, vq)
 
     fd = lambda x, y, z: np.where(y == Ly, d1, np.where(y == 0, d2, np.where(x == Lx, d3, None)))
@@ -55,36 +54,22 @@ def exemplo2D(nx, ny, nz):
 
     p = solver2D.solve(mesh, K, q, fd, fn, create_vtk = solver.verbose, check = False)
 
-    if solver.verbose:
-        x = mesh.volumes.x[:nx*ny]
-        y = mesh.volumes.y[:nx*ny]
-
-        plt.title("Solução 2D - {} elementos".format(nvols))
-        # Plot contorno
-        plt.contourf(x.reshape((nx, ny)), y.reshape((nx, ny)), p[:nx*ny].reshape((nx, ny)), 100)
-        plt.colorbar()
-        plt.xlabel("x")
-        plt.ylabel("y")
-        plt.grid()
-        plt.show()
-
     return mesh, solver2D
 
-def exemplo3D(nx, ny, nz):
+def exemplo3D(meshfile):
         
     Lx, Ly, Lz = 1, 2, 3
-    dx, dy, dz = Lx / nx, Ly / ny, Lz / nz
 
     solver3D = solver.Solver()
-    mesh = solver3D.create_mesh(nx, ny, nz, dx, dy, dz, name = "exemplo3D")
-    nvols = mesh.nvols
+    mesh = solver3D.create_mesh(meshfile)
+    nvols = len(mesh.volumes)
 
     v1 = 10.
     d1, d2, d3, d4 = 0., 100., 10., 40.
     n1, n2 = 0.3, 0.7
     vq = 0.
 
-    K = solver.get_tensor(v1, (nz, ny, nx))
+    K = solver.get_tensor(v1, (nvols))
     q = np.full(nvols, vq)
 
     fd = lambda x, y, z: np.where(y == Ly, d1, np.where(y == 0, d2, np.where(x == Lx, d3, np.where(z == 0, d4, None))))
@@ -93,20 +78,16 @@ def exemplo3D(nx, ny, nz):
     p = solver3D.solve(mesh, K, q, fd, fn, create_vtk = solver.verbose, check = False)
     return mesh, solver3D
 
-def exemploAleatorio(nx, ny, nz):
-    nvols = nx * ny * nz
-    nx = np.random.randint(1, int(nvols ** (1/2)))
-    ny = np.random.randint(1, int(nvols ** (1/2)))
-    nz = nvols // (nx * ny)
+def exemploAleatorio(meshfile):
 
-    Lx, Ly, Lz = np.random.uniform(1, 10), np.random.uniform(1, 10), np.random.uniform(1, 10)
-    dx, dy, dz = Lx / nx, Ly / ny, Lz / nz
+    Lx, Ly, Lz = 20, 20, 20
+    
 
     solverA = solver.Solver()
-    meshA = solverA.create_mesh(nx, ny, nz, dx, dy, dz, name = "exemploAleatorio")
-    nvols = meshA.nvols
+    meshA = solverA.create_mesh(meshfile)
+    nvols = len(meshA.volumes)
     a, b = np.random.uniform(1, 100, 2)
-    K = solver.get_random_tensor(a, b, size = (nz, ny, nx))
+    K = solver.get_random_tensor(a, b, size = (nvols))
     q = np.random.uniform(0, 100, nvols)
     fd_v = np.random.choice(np.append([None] * 10, np.random.uniform(1, 100, 3)), size = len(meshA.faces.boundary))
     fn_v = np.random.choice(np.append([None] * 10, np.random.uniform(1, 100, 3)), size = len(meshA.faces.boundary))
@@ -117,22 +98,23 @@ def exemploAleatorio(nx, ny, nz):
     
     return meshA, solverA
 
-def exemploAnalitico(nx, ny, nz, pa, ga, qa, K_vols):
+def exemploAnalitico(meshfile, pa, ga, qa, K_vols):
     # P = sin(x) + cos(y) + sen(x)
     #grad(p) = (cos(x), -sin(y), cos(z))
     # div(K * grad(p)) = K * (-sen(x) - cos(y) - sen(z))
     
-    Lx, Ly, Lz = 1, 2, 3
-    dx, dy, dz = Lx / nx, Ly / ny, Lz / nz
+    Lx, Ly, Lz = 1, 1, 1
 
     solverA = solver.Solver()
-    meshA = solverA.create_mesh(nx, ny, nz, dx, dy, dz, name = "exemploAnalitico")
-    nvols = meshA.nvols
-    K = solver.get_tensor(K_vols, (nz, ny, nx))
+    meshA = solverA.create_mesh(meshfile)
+    nvols = len(meshA.volumes)
+    K = solver.get_tensor(K_vols, (nvols))
     
     normal = lambda x, y, z: meshA.faces.normal[meshA.faces.boundary]
+    coords = meshA.volumes.center[:]
+    xv, yv, zv = coords[:, 0], coords[:, 1], coords[:, 2]
 
-    q = qa(meshA.volumes.x, meshA.volumes.y, meshA.volumes.z) * meshA.volume
+    q = qa(xv, yv, zv) * meshA.volumes.volume[:]
     
     fd = lambda x, y, z: pa(x, y, z)
     fn = lambda x, y, z: (normal(x, y, z) * ga(x, y, z) * -K_vols).sum(axis = 1)
@@ -141,11 +123,10 @@ def exemploAnalitico(nx, ny, nz, pa, ga, qa, K_vols):
     
     if solver.verbose:
         # Plot 3D solution
-        x, y, z = meshA.volumes.x, meshA.volumes.y, meshA.volumes.z
         fig = plt.figure()
-        fig.suptitle('Erro Médio Quadrático: ' + str(np.mean((p - pa(x, y, z)) ** 2)))
+        fig.suptitle('Erro Médio Quadrático: ' + str(np.mean((p - pa(xv, yv, zv)) ** 2)))
         ax = fig.add_subplot(121, projection='3d')
-        ax.scatter(x, y, z, c = p, cmap = 'jet')
+        ax.scatter(xv, yv, zv, c = p, cmap = 'jet')
         ax.title.set_text('Solução numérica')
         ax.set_xlabel('x')
         ax.set_ylabel('y')
@@ -153,17 +134,16 @@ def exemploAnalitico(nx, ny, nz, pa, ga, qa, K_vols):
         
         # Plot analytical solution
         ax = fig.add_subplot(122, projection='3d')
-        ax.scatter(x, y, z, c = pa(x, y, z), cmap = 'jet')
+        ax.scatter(xv, yv, zv, c = pa(xv, yv, zv), cmap = 'jet')
         ax.title.set_text('Solução analítica')
         ax.set_xlabel('x')
         ax.set_ylabel('y')
         ax.set_zlabel('z')
         
-
-        plt.show() if nvols < 10000 else None
+        plt.savefig("teste.png")
+        #plt.show() if nvols < 10000 else None
 
     return meshA, solverA
-
 
 def testes_tempo():
     nvols0 = 10
@@ -269,7 +249,6 @@ def testes_tempo():
         plt.savefig("./tmp/{}.png".format(f[i].__name__))
         #plt.show()
         print("Total Time for {}: \t {}".format(f[i].__name__, timedelta(seconds = time.time() - start_time)))
-
   
 def testes_precisao(solutions, K_vols):
     # Solutions = tuple([p0, g0, q0], [p1, g1, q1], ...)
@@ -333,12 +312,11 @@ def testes_precisao(solutions, K_vols):
 if __name__ == '__main__':
     solver.verbose = True
     meshfile = "./mesh/20.h5m"
-    exemplo1D(meshfile)
-    #exemplo2D(300, 300, 1)
-    #exemplo3D(60, 60, 60)
-    #exemploAleatorio(50,50,50)
-    #exemploAnalitico(30, 30, 30, pa1, ga1, qa1, K_vols)
-    #testes_tempo()
+    #exemplo1D(meshfile)
+    #exemplo2D(meshfile)
+    #exemplo3D(meshfile)
+    #exemploAleatorio(meshfile)
+    
     K_vols = 112.435
     pa1 = lambda x, y, z: np.sin(x) + np.cos(y) + np.exp(z)
     ga1 = lambda x, y, z: np.array([np.cos(x), -np.sin(y), np.exp(z)]).T
@@ -346,7 +324,8 @@ if __name__ == '__main__':
     pa2 = lambda x, y, z: x**2 + y**2 + z**2
     ga2 = lambda x, y, z: np.array([2*x, 2*y, 2*z]).T
     qa2 = lambda x, y, z: -K_vols * (2) * np.ones_like(x)
-    print("Testes de Precisão")
+    exemploAnalitico(meshfile, pa2, ga2, qa2, K_vols)
+    #testes_tempo()
     #testes_precisao([(pa1, ga1, qa1), (pa2, ga2, qa2)], K_vols)
     
     

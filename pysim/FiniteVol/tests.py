@@ -138,7 +138,7 @@ def exemploAnalitico(nx, ny, nz, pa, ga, qa, K_vols):
     #grad(p) = (cos(x), -sin(y), cos(z))
     # div(K * grad(p)) = K * (-sen(x) - cos(y) - sen(z))
     
-    Lx, Ly, Lz = 1, 2, 3
+    Lx, Ly, Lz = 2, 2, 3
     dx, dy, dz = Lx / nx, Ly / ny, Lz / nz
 
     solverA = solver.Solver()
@@ -176,7 +176,7 @@ def exemploAnalitico(nx, ny, nz, pa, ga, qa, K_vols):
         ax.set_zlabel('z')
         
 
-        plt.show() if nvols < 10000 else None
+        plt.show() if nvols < 100000 else None
 
     return meshA, solverA
 
@@ -349,14 +349,12 @@ def testes_precisao(solutions, K_vols):
 if __name__ == '__main__':
     solver.verbose = True
     
-    exemplo1D(20, 20, 20)
+    #exemplo1D(20, 20, 20)
     #exemplo2D(300, 300, 1)
     #exemplo3D(60, 60, 60)
     #exemploAleatorio(50,50,50)
-    #exemploAnalitico(30, 30, 30, pa1, ga1, qa1, K_vols)
     #testes_tempo()
 
-    exit()
     K_vols = 112.435
     pa1 = lambda x, y, z: np.sin(x) + np.cos(y) + np.exp(z)
     ga1 = lambda x, y, z: np.array([np.cos(x), -np.sin(y), np.exp(z)]).T
@@ -364,6 +362,9 @@ if __name__ == '__main__':
     pa2 = lambda x, y, z: x**2 + y**2 + z**2
     ga2 = lambda x, y, z: np.array([2*x, 2*y, 2*z]).T
     qa2 = lambda x, y, z: -K_vols * (2) * np.ones_like(x)
-    print("Testes de Precisão")
-    testes_precisao([(pa1, ga1, qa1), (pa2, ga2, qa2)], K_vols)
+
+
+    exemploAnalitico(50, 50, 50, pa1, ga1, qa1, K_vols)
+    #print("Testes de Precisão")
+    #testes_precisao([(pa1, ga1, qa1), (pa2, ga2, qa2)], K_vols)
     

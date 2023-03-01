@@ -86,38 +86,38 @@ class Solver:
         start_time = time.time()
 
         faces_nodes = self.mesh.faces.bridge_adjacencies(self.mesh.faces.all, 0, 0)
-        x_idx = faces_nodes[:, 0]
-        y_idx = faces_nodes[:, 1]
-        z_idx = faces_nodes[:, 2]
+        i_idx = faces_nodes[:, 0]
+        j_idx = faces_nodes[:, 1]
+        k_idx = faces_nodes[:, 2]
 
-        x = self.mesh.nodes.coords[x_idx]
-        y = self.mesh.nodes.coords[y_idx]
-        z = self.mesh.nodes.coords[z_idx]
+        i = self.mesh.nodes.coords[i_idx]
+        j = self.mesh.nodes.coords[j_idx]
+        k = self.mesh.nodes.coords[k_idx]
 
         n_vols_pairs = len(self.vols_pairs)
         volumes_centers_flat = self.mesh.volumes.center[self.vols_pairs.flatten()]
 
         volumes_centers = volumes_centers_flat.reshape((n_vols_pairs, 2, 3))
 
-        yL = y - volumes_centers[:, 0]
+        jL = j - volumes_centers[:, 0]
 
-        self.Ns = 0.5 * np.cross(x - y, z - y)
+        self.Ns = 0.5 * np.cross(i - j, k - j)
         self.Ns_norm = np.linalg.norm(self.Ns, axis=1)
 
-        N_sign = np.sign(np.einsum("ij,ij->i", yL, self.Ns))
-        (self.vols_pairs[N_sign < 0, 0],
+        N_sign = np.sign(np.einsum("ij,ij->i", jL, self.Ns))
+        (self.vols_pairs[N_sign < 0, 0], 
          self.vols_pairs[N_sign < 0, 1]) = (self.vols_pairs[N_sign < 0, 1],
-                                               self.vols_pairs[N_sign < 0, 0])
+                                            self.vols_pairs[N_sign < 0, 0])
 
         L = self.mesh.volumes.center[self.vols_pairs[:, 0]]
         R = self.mesh.volumes.center[self.vols_pairs[:, 1]]
 
 
-        yL = y - L
-        yR = y - R
+        jL = j - L
+        jR = j - R
 
-        self.h_L = np.abs(np.einsum("ij,ij->i", self.Ns, yL) / self.Ns_norm)
-        self.h_R = np.abs(np.einsum("ij,ij->i", self.Ns, yR) / self.Ns_norm)
+        self.h_L = np.abs(np.einsum("ij,ij->i", self.Ns, jL) / self.Ns_norm)
+        self.h_R = np.abs(np.einsum("ij,ij->i", self.Ns, jR) / self.Ns_norm)
 
         self.times["Montar Vetores Normais"] = time.time() - start_time
         if verbose: 
@@ -259,7 +259,8 @@ class Solver:
         meshset = self.mesh.core.mb.create_meshset()
         coords = self.mesh.volumes.center[:]
         x, y, z = coords[:, 0], coords[:, 1], coords[:, 2]
-        self.mesh.an_sol[:] = an_sol(x, y, z)
+        if an_sol:
+            self.mesh.an_sol[:] = an_sol(x, y, z)
         self.mesh.nu_sol[:] = self.p
         self.mesh.x, self.mesh.y, self.mesh.z = x, y, z
         self.mesh.core.mb.add_entities(meshset, self.mesh.core.all_volumes)
