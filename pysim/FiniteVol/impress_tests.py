@@ -7,6 +7,7 @@ import solver
 import matplotlib.pyplot as plt
 from mesh_gen import create_box, legacy_create_box
 from datetime import timedelta
+from memory_profiler import profile
 
 
 def block_print():
@@ -176,7 +177,7 @@ def exemploAnalitico(order, pa, ga, qa, K_vols, Lx, Ly, Lz, meshfile = None):
 def testes_tempo(Lx, Ly, Lz):
     
     nvols0 = 100
-    nvolsMAX = int(5e4)
+    nvolsMAX = int(5e2)
     incremento = 1.7
     nvols0 = int(max(nvols0, 1/(incremento - 1) + 1))
     ntestes = 10
@@ -187,6 +188,8 @@ def testes_tempo(Lx, Ly, Lz):
 
     f = [exemplo1D, exemplo2D, exemplo3D, exemploAleatorio]
     
+    fp = open('memory_profiler.log','w+')
+    @profile(stream=fp)
     def run_iterations(f):
         tempos = np.empty((niteracoes, 4, 3))
         # Tempos[i][0] = [MIN, MEDIO, MAX] -> Montar Malha
@@ -195,11 +198,11 @@ def testes_tempo(Lx, Ly, Lz):
         # Tempos[i][3] = [MIN, MEDIO, MAX] -> Total
         nvols = nvols0
         vols = []
-
+        
 
         iter_time = time.time()
+
         for i in range(niteracoes):
-            
             tempos_aux = np.empty(ntestes, dtype = object)
             for j in range(ntestes):
                 total_time = time.time()
@@ -278,6 +281,7 @@ def testes_tempo(Lx, Ly, Lz):
             ax[i][j].legend(loc = "upper left")
     plt.tight_layout()
     plt.savefig("./tmp/testes_tempo.png")
+    fp.close()
 
 def testes_precisao(solutions, K_vols, Lx, Ly, Lz):
     # Solutions = tuple([p0, g0, q0], [p1, g1, q1], ...)
@@ -391,8 +395,8 @@ if __name__ == '__main__':
     qa3 = lambda x, y, z: -K_vols * (0)
     
     #exemploAnalitico(order, pa1, ga1, qa1, K_vols, Lx, Ly, Lz)
-    #testes_tempo(Lx, Ly, Lz)
-    testes_precisao([(pa1, ga1, qa1), (pa2, ga2, qa2), (pa3, ga3, qa3)], K_vols, Lx, Ly, Lz)
+    testes_tempo(Lx, Ly, Lz)
+    #testes_precisao([(pa1, ga1, qa1), (pa2, ga2, qa2), (pa3, ga3, qa3)], K_vols, Lx, Ly, Lz)
     exit()
     meshfiles = ["./mesh/20.h5m", "./mesh/30.h5m"] #,"./mesh/40.h5m", "./mesh/50.h5m", "./mesh/60.h5m", "./mesh/80.h5m"]
     sz = {meshfiles[0]: (20, 20, 20),
