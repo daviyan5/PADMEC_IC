@@ -144,6 +144,10 @@ class Solver:
             d_nodes = index[d_values != None]
             d_values = d_values[d_values != None].astype(float)
             volumes = self.mesh.faces.adjacents[d_nodes][:, 0]
+
+            self.d_values = d_values
+            self.d_nodes = d_nodes
+            
             self.A[volumes, volumes] -= self.faces_trans[d_nodes]
             self.b[volumes] -= d_values * self.faces_trans[d_nodes]
 
@@ -155,6 +159,10 @@ class Solver:
             index = self.mesh.faces.boundary
             n_nodes  = index[n_values != None]
             n_values = n_values[n_values != None].astype(float)
+
+            self.n_values = n_values
+            self.n_nodes = n_nodes
+
             volumes = self.mesh.faces.adjacents[n_nodes][:, 0]
             self.b[volumes] += n_values * self.mesh.volume
         

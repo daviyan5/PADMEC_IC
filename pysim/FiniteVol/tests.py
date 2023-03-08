@@ -138,7 +138,7 @@ def exemploAnalitico(nx, ny, nz, pa, ga, qa, K_vols):
     #grad(p) = (cos(x), -sin(y), cos(z))
     # div(K * grad(p)) = K * (-sen(x) - cos(y) - sen(z))
     
-    Lx, Ly, Lz = 2, 2, 3
+    Lx, Ly, Lz = 20, 20, 20
     dx, dy, dz = Lx / nx, Ly / ny, Lz / nz
 
     solverA = solver.Solver()
@@ -146,15 +146,20 @@ def exemploAnalitico(nx, ny, nz, pa, ga, qa, K_vols):
     nvols = meshA.nvols
     K = solver.get_tensor(K_vols, (nz, ny, nx))
     
-    normal = lambda x, y, z: meshA.faces.normal[meshA.faces.boundary]
+    normal = meshA.faces.normal[meshA.faces.boundary]
 
     q = qa(meshA.volumes.x, meshA.volumes.y, meshA.volumes.z) * meshA.volume
     
     fd = lambda x, y, z: pa(x, y, z)
-    fn = lambda x, y, z: (normal(x, y, z) * ga(x, y, z) * -K_vols).sum(axis = 1)
+    fn = lambda x, y, z: (normal * ga(x, y, z) * -K_vols).sum(axis = 1)
     #np.zeros_like(x)#
     p = solverA.solve(meshA, K, q, fd, fn, create_vtk = solver.verbose, check = solver.verbose, an_sol=pa)
-    
+
+    #if nvols == 8000:
+    #    np.savetxt('d_nodes.txt', solverA.d_nodes.astype('int'))
+    #    np.savetxt('n_nodes.txt', solverA.n_nodes.astype('int'))
+    #    np.savetxt('d_vals.txt', solverA.d_values)
+    #    np.savetxt('n_vals.txt', solverA.n_values)
     if solver.verbose:
         # Plot 3D solution
         x, y, z = meshA.volumes.x, meshA.volumes.y, meshA.volumes.z
@@ -290,7 +295,7 @@ def testes_tempo():
 def testes_precisao(solutions, K_vols):
     # Solutions = tuple([p0, g0, q0], [p1, g1, q1], ...)
     nvols0 = 10
-    nvolsMAX = int(2e5)
+    nvolsMAX = int(1e4)
     incremento = 1.2
     nvols0 = int(max(nvols0, 1/(incremento - 1) + 1))
     ntestes = 1
@@ -309,8 +314,6 @@ def testes_precisao(solutions, K_vols):
 
         iter_time = time.time()
         for i in range(niteracoes):
-            str_i = "0" * (len(str(niteracoes)) - len(str(i + 1))) + str(i + 1)
-            str_nvols = "0" * (len(str(nvolsMAX)) - len(str(nvols))) + str(nvols)
 
             
             nx, ny, nz = int(nvols ** (1/3)), int(nvols ** (1/3)), int(nvols ** (1/3))
@@ -320,11 +323,19 @@ def testes_precisao(solutions, K_vols):
             p_a = pa(mesh.volumes.x, mesh.volumes.y, mesh.volumes.z)
             error = np.sqrt(np.sum((p_a - solver.p)**2 * mesh.volumes.volumes) / np.sum(p_a**2 * mesh.volumes.volumes))
 
+            #print(error)
+            #print(np.mean(abs(solver.p - p_a)))
+
+            real_vols = mesh.nvols
             erro_medio.append(error)
             precisao_media.append(1. - error)
-            vols.append(nvols)
+            vols.append(real_vols)
 
+            
             t_str = timedelta(seconds = time.time() - iter_time)
+            str_i = "0" * (len(str(niteracoes)) - len(str(i + 1))) + str(i + 1)
+            str_nvols = "0" * (len(str(nvolsMAX)) - len(str(real_vols))) + str(real_vols)
+
             print("Iteration : {}/{}  \t Vols: {} \t Total Time : {}".format(str_i, niteracoes, str_nvols, t_str))
             nvols = int(nvols * incremento)
 
@@ -355,7 +366,7 @@ if __name__ == '__main__':
     #exemploAleatorio(50,50,50)
     #testes_tempo()
 
-    K_vols = 112.435
+    K_vols = 1.
     pa1 = lambda x, y, z: np.sin(x) + np.cos(y) + np.exp(z)
     ga1 = lambda x, y, z: np.array([np.cos(x), -np.sin(y), np.exp(z)]).T
     qa1 = lambda x, y, z: -K_vols * (-np.sin(x) - np.cos(y) + np.exp(z))
@@ -364,7 +375,7 @@ if __name__ == '__main__':
     qa2 = lambda x, y, z: -K_vols * (2) * np.ones_like(x)
 
 
-    exemploAnalitico(50, 50, 50, pa1, ga1, qa1, K_vols)
+    #exemploAnalitico(50, 50, 50, pa1, ga1, qa1, K_vols)
     #print("Testes de Precisão")
-    #testes_precisao([(pa1, ga1, qa1), (pa2, ga2, qa2)], K_vols)
+    testes_precisao([(pa1, ga1, qa1), (pa2, ga2, qa2)], K_vols)
     
