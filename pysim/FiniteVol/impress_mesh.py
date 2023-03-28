@@ -96,34 +96,39 @@ def create_box(Lx, Ly, Lz, nvols_order, visualize = False, filename = None):
     gmsh.model.add("box")
 
     
-    v1 = gmsh.model.occ.addBox(0, 0, 0, Lx, Ly, Lz, tag = 1)
+    v1 = gmsh.model.occ.addBox(0, 0, 0, Lx, Ly, Lz)
     gmsh.model.occ.synchronize()
 
+    """
+    nvols = int(nvols_order ** (1/3)) + 2
+    for c in gmsh.model.getEntities(1):
+        gmsh.model.mesh.setTransfiniteCurve(c[1], nvols)
+    for s in gmsh.model.getEntities(2):
+        gmsh.model.mesh.setRecombine(s[0], s[1])
+        gmsh.model.mesh.setSmoothing(s[0], s[1], 1000)
+        gmsh.model.mesh.setTransfiniteSurface(s[1])
     
-    #nvols = int(nvols_order ** (1/3)) + 2
-    #for c in gmsh.model.getEntities(1):
-    #    gmsh.model.mesh.setTransfiniteCurve(c[1], nvols)
-    #for s in gmsh.model.getEntities(2):
-    #    gmsh.model.mesh.setTransfiniteSurface(s[1])
-    #    gmsh.model.mesh.setRecombine(s[0], s[1])
-    #    gmsh.model.mesh.setSmoothing(s[0], s[1], 100)
-    #gmsh.model.mesh.setTransfiniteVolume(v1)
-
-    mn = ((Lx * Ly * Lz) / nvols_order) ** (1/3)
-    mx = ((Lx * Ly * Lz) / nvols_order) ** (1/3)
-    gmsh.option.setNumber('Mesh.MeshSizeMin', mn)
-    gmsh.option.setNumber('Mesh.MeshSizeMax', mx)
-
+    gmsh.model.mesh.setTransfiniteVolume(v1)
+    """
+    #"""
+    import numpy as np
+    vols_axis = int(nvols_order ** (1/3))
+    factor = 0.4
+    mn = min(Lx, Ly, Lz) ** (factor) 
+    mx = max(Lx, Ly, Lz) ** (factor)
+    gmsh.option.setNumber("Mesh.CharacteristicLengthMin", mn / vols_axis)
+    gmsh.option.setNumber("Mesh.CharacteristicLengthMax", mx / vols_axis)
+    
+    #gmsh.option.setNumber('Mesh.MeshSizeMax', mx)
     gmsh.model.mesh.setTransfiniteAutomatic()
+    #"""
     gmsh.model.mesh.generate(3)
-
     gmsh.option.setNumber("Mesh.MshFileVersion", 2.16)
 
     if filename is None:
         filename = "box.msh"
 
     gmsh.write(filename)
-
     if '-nopopup' not in sys.argv and visualize:
         gmsh.fltk.run()
 

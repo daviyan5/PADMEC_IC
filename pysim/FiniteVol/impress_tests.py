@@ -4,27 +4,22 @@ import sys
 import os
 import math
 import solver
+import re
+import objgraph
+import gc
 import matplotlib.pyplot as plt
 from mesh_gen import create_box, legacy_create_box
 from datetime import timedelta
 from memory_profiler import profile
 
-
-def block_print():
-    sys.stdout = open(os.devnull, 'w')
-
-# Restore
-def enable_print():
-    sys.stdout = sys.__stdout__
-
 def exemplo1D(order, Lx, Ly, Lz, meshfile = None):
 
     solver1D = solver.Solver()
     montar_time = time.time()
-    if not meshfile:
+    if meshfile is None:
         meshfile = create_box(Lx, Ly, Lz, order)
     mesh = solver1D.create_mesh(meshfile)
-    solver1D.times["Montar Malha"] = time.time() - montar_time
+    solver1D.times["Pré-Processamento"] = time.time() - montar_time
 
     nvols = len(mesh.volumes)
 
@@ -39,23 +34,27 @@ def exemplo1D(order, Lx, Ly, Lz, meshfile = None):
     q = np.full(nvols, vq)
 
     fd = lambda x, y, z: np.where(x == 0., d1, np.where(x == Lx, d2, None))
-    fn = lambda x, y, z: np.where(y == 0., 0., np.where(y == Lx, 0., None))
+    fn = lambda x, y, z: np.where(y == 0., 0., np.where(y == Ly, 0., None))
 
     a_p = lambda x, y, z : np.where(x < Lx/2, d1 - (d1 - d2) * (x / (Lx/2)) * (v1/(v1 + v2)), 
                                              (d1 + (d1 - d2) * (v2 - v1)/(v1 + v2)) - (d1 - d2) * (x / (Lx/2)) * (v2/(v1+v2)))
-                                
-    p = solver1D.solve(mesh, K, q, fd, fn, create_vtk = solver.verbose, check = False, an_sol=a_p)
-
-    return solver1D
     
-def exemplo2D(order, Lx, Ly, Lz):
+    
+    solver1D.times["Total"] = time.time()   
+    p = solver1D.solve(mesh, K, q, fd, fn, create_vtk = solver.verbose, check = False, an_sol=a_p, name = "1D")
+    solver1D.times["Total"] = time.time() - solver1D.times["Total"] + solver1D.times["Pré-Processamento"]
+    del fd, fn, mesh, meshfile
+    return solver1D
+
+def exemplo2D(order, Lx, Ly, Lz, meshfile = None):
 
     solver2D = solver.Solver()
 
     montar_time = time.time()
-    meshfile = create_box(Lx, Ly, Lz, order)
+    if meshfile is None:
+        meshfile = create_box(Lx, Ly, Lz, order)
     mesh = solver2D.create_mesh(meshfile)
-    solver2D.times["Montar Malha"] = time.time() - montar_time
+    solver2D.times["Pré-Processamento"] = time.time() - montar_time
 
     nvols = len(mesh.volumes)
 
@@ -69,18 +68,21 @@ def exemplo2D(order, Lx, Ly, Lz):
     fd = lambda x, y, z: np.where(y == Ly, d1, np.where(y == 0, d2, np.where(x == Lx, d3, None)))
     fn = lambda x, y, z: np.where(x == 0, 0, None)
 
-    p = solver2D.solve(mesh, K, q, fd, fn, create_vtk = solver.verbose, check = False)
-
+    solver2D.times["Total"] = time.time()
+    p = solver2D.solve(mesh, K, q, fd, fn, create_vtk = solver.verbose, check = False, name = "2D")
+    solver2D.times["Total"] = time.time() - solver2D.times["Total"] + solver2D.times["Pré-Processamento"]
+    del fd, fn, mesh, meshfile
     return solver2D
 
-def exemplo3D(order, Lx, Ly, Lz):
+def exemplo3D(order, Lx, Ly, Lz, meshfile = None):
 
     solver3D = solver.Solver()
 
     montar_time = time.time()
-    meshfile = create_box(Lx, Ly, Lz, order)
+    if meshfile is None:
+        meshfile = create_box(Lx, Ly, Lz, order)
     mesh = solver3D.create_mesh(meshfile)
-    solver3D.times["Montar Malha"] = time.time() - montar_time
+    solver3D.times["Pré-Processamento"] = time.time() - montar_time
 
     nvols = len(mesh.volumes)
 
@@ -95,17 +97,21 @@ def exemplo3D(order, Lx, Ly, Lz):
     fd = lambda x, y, z: np.where(y == Ly, d1, np.where(y == 0, d2, np.where(x == Lx, d3, np.where(z == 0, d4, None))))
     fn = lambda x, y, z: np.where(x == 0, n1, np.where(z == Lz, n2, None))
 
-    p = solver3D.solve(mesh, K, q, fd, fn, create_vtk = solver.verbose, check = False)
+    solver3D.times["Total"] = time.time()
+    p = solver3D.solve(mesh, K, q, fd, fn, create_vtk = solver.verbose, check = False, name = "3D")
+    solver3D.times["Total"] = time.time() - solver3D.times["Total"] + solver3D.times["Pré-Processamento"]
+    del fd, fn, mesh, meshfile
     return solver3D
 
-def exemploAleatorio(order, Lx, Ly, Lz):
+def exemploAleatorio(order, Lx, Ly, Lz, meshfile = None):
 
     solverA = solver.Solver()
 
     montar_time = time.time()
-    meshfile = create_box(Lx, Ly, Lz, order)
+    if meshfile is None:
+        meshfile = create_box(Lx, Ly, Lz, order)
     meshA = solverA.create_mesh(meshfile)
-    solverA.times["Montar Malha"] = time.time() - montar_time
+    solverA.times["Pré-Processamento"] = time.time() - montar_time
 
     nvols = len(meshA.volumes)
     a, b = np.random.uniform(1, 100, 2)
@@ -116,102 +122,158 @@ def exemploAleatorio(order, Lx, Ly, Lz):
     fd = lambda x, y, z: fd_v
     fn = lambda x, y, z: fn_v
 
+    solverA.times["Total"] = time.time()
     p = solverA.solve(meshA, K, q, fd, fn, create_vtk = solver.verbose, check = False)
-    
+    solverA.times["Total"] = time.time() - solverA.times["Total"] + solverA.times["Pré-Processamento"]
+    del fd, fn, mesh, meshfile
     return solverA
 
 def exemploAnalitico(order, pa, ga, qa, K_vols, Lx, Ly, Lz, meshfile = None):
-    # P = sin(x) + cos(y) + sen(x)
-    #grad(p) = (cos(x), -sin(y), cos(z))
-    # div(K * grad(p)) = K * (-sen(x) - cos(y) - sen(z))
-    
     solverA = solver.Solver()
 
     montar_time = time.time()
-    if not meshfile:
+    if meshfile is None:
         meshfile = create_box(Lx, Ly, Lz, order)
     meshA = solverA.create_mesh(meshfile)
-    solverA.times["Montar Malha"] = time.time() - montar_time
-
+    solverA.times["Pré-Processamento"] = time.time() - montar_time
+    
     nvols = len(meshA.volumes)
     K = solver.get_tensor(K_vols, (nvols))
+
+    boundary_faces = meshA.faces.boundary[:]
+    normal, vL, vR = solverA._get_normal(boundary_faces)
+    normal = np.abs(normal) / np.linalg.norm(normal, axis = 1).reshape((len(normal), 1))
     
-    normal = meshA.faces.normal[meshA.faces.boundary]
     coords = meshA.volumes.center[:]
     xv, yv, zv = coords[:, 0], coords[:, 1], coords[:, 2]
 
-    q = qa(xv, yv, zv) * solverA.volumes
-    
+    q = qa(xv, yv, zv, K) * solverA.volumes
     fd = lambda x, y, z: pa(x, y, z)
-    fn = lambda x, y, z: (normal * ga(x, y, z) * -K_vols).sum(axis = 1)
-    #np.zeros_like(x)#
+    fn = lambda x, y, z: (np.einsum("ij,ij->i", normal , (-K_vols @ ga(x, y, z).T).T))
+    #fd = lambda x, y, z: np.zeros_like(x)
+    #fn = lambda x, y, z: np.zeros_like(x)
+
+    
     p = solverA.solve(meshA, K, q, fd, fn, create_vtk = solver.verbose, check = solver.verbose, an_sol=pa)
-    #np.savetxt('d_nodes.txt', solverA.d_nodes.astype('int'))
-    #np.savetxt('n_nodes.txt', solverA.n_nodes.astype('int'))
-    #np.savetxt('d_vals.txt', solverA.d_values)
-    #np.savetxt('n_vals.txt', solverA.n_values)
+    
     if solver.verbose:
         # Plot 3D solution
-        fig = plt.figure()
-        fig.suptitle('Erro Médio Quadrático: ' + str(np.mean((p - pa(xv, yv, zv)) ** 2)))
-        ax = fig.add_subplot(121, projection='3d')
+        
+        plt.axis('scaled')
+        fig = plt.figure(figsize = (10,10))
+        p_a = pa(xv,yv,zv)
+        error = np.sum((p_a - solverA.p)**2 * solverA.volumes) / np.sum((p_a**2) * solverA.volumes)
+        print(str(np.sqrt(error)))
+        print(solverA.nvols)
+        fig.suptitle('Erro Médio Quadrático: ' + str(np.sqrt(error)))
+        ax = fig.add_subplot(221, projection='3d')
         ax.scatter(xv, yv, zv, c = p, cmap = 'jet')
+        # Add Values on the plot
+        for i in range(len(xv)):
+            ax.text(xv[i], yv[i], zv[i], str(np.round(p[i], 4)), size = 5, zorder = 1, color = 'k')
         ax.title.set_text('Solução numérica')
         ax.set_xlabel('x')
         ax.set_ylabel('y')
         ax.set_zlabel('z')
         
         # Plot analytical solution
-        ax = fig.add_subplot(122, projection='3d')
+        ax = fig.add_subplot(222, projection='3d')
         ax.scatter(xv, yv, zv, c = pa(xv, yv, zv), cmap = 'jet')
+        # Add Values on the plot
+        for i in range(len(xv)):
+            ax.text(xv[i], yv[i], zv[i], str(np.round(pa(xv[i], yv[i], zv[i]), 4)), size = 5, zorder = 1, color = 'k')
+
         ax.title.set_text('Solução analítica')
         ax.set_xlabel('x')
         ax.set_ylabel('y')
         ax.set_zlabel('z')
         
-        plt.savefig("teste.png")
+        # Plot normal vectors 
+        ax = fig.add_subplot(223, projection='3d')
+        coords = meshA.faces.center[solverA.internal_faces]
+        xf, yf, zf = coords[:, 0], coords[:, 1], coords[:, 2]
+        ax.quiver(xf, yf, zf, solverA.N_norm[:, 0], solverA.N_norm[:, 1], solverA.N_norm[:, 2], length = 0.1, normalize = True)
+        ax.set_xlabel('x')
+        ax.set_ylabel('y')
+        ax.set_zlabel('z')
+        ax.title.set_text('Vetores normais internos')
+
+        # Plot normal vectors 
+        ax = fig.add_subplot(224, projection='3d')
+        coords = meshA.faces.center[boundary_faces]
+        xf, yf, zf = coords[:, 0], coords[:, 1], coords[:, 2]
+        ax.quiver(xf, yf, zf, normal[:, 0], normal[:, 1], normal[:, 2], length = 0.1, normalize = True)
+        ax.set_xlabel('x')
+        ax.set_ylabel('y')
+        ax.set_zlabel('z')
+        ax.title.set_text('Vetores normais superficie')
+
+        
+        ax.set_xlabel('x')
+        ax.set_ylabel('y')
+        ax.set_zlabel('z')
+        ax.title.set_text('Fluxo volumes númerico')
+
+        
+
+        plt.tight_layout()
+        index = np.random.randint(0,10)
+        index = 0
+        plt.show()
+        plt.savefig("teste{}.png".format(index))
+        plt.clf()
         #plt.show() if nvols < 10000 else None
 
     return solverA
 
+
+
 def testes_tempo(Lx, Ly, Lz):
+    print("RUNNING TIME TESTS")
     
-    nvols0 = 100
-    nvolsMAX = int(5e2)
-    incremento = 1.7
-    nvols0 = int(max(nvols0, 1/(incremento - 1) + 1))
-    ntestes = 10
+    nvols0, nvolsMAX, incremento, ntestes, niteracoes = get_tests_args()
     tempos = np.zeros(ntestes)
-    niteracoes = int(np.ceil(np.log(float(nvolsMAX)/nvols0) / np.log(incremento))) + 1
+    
     
     solver.verbose = False
 
-    f = [exemplo1D, exemplo2D, exemplo3D, exemploAleatorio]
-    
-    fp = open('memory_profiler.log','w+')
-    @profile(stream=fp)
+    f = [exemplo1D, exemplo2D, exemplo3D]
     def run_iterations(f):
         tempos = np.empty((niteracoes, 4, 3))
-        # Tempos[i][0] = [MIN, MEDIO, MAX] -> Montar Malha
+        # Tempos[i][0] = [MIN, MEDIO, MAX] -> Pré-Processamento
         # Tempos[i][1] = [MIN, MEDIO, MAX] -> Montar Matriz
         # Tempos[i][2] = [MIN, MEDIO, MAX] -> Resolver Sistema
         # Tempos[i][3] = [MIN, MEDIO, MAX] -> Total
         nvols = nvols0
         vols = []
-        
+       
 
         iter_time = time.time()
-
+        
         for i in range(niteracoes):
+            mesh_create_time = time.time()
+            meshfile = create_box(Lx, Ly, Lz, nvols)
+            mesh_args = get_args_mesh(meshfile)
+            mesh_create_time = time.time() - mesh_create_time
             tempos_aux = np.empty(ntestes, dtype = object)
+
+        
             for j in range(ntestes):
-                total_time = time.time()
-                solverF = f(nvols, Lx, Ly, Lz)
-                solverF.times["Total"] = time.time() - total_time
+                solverF = f(nvols, Lx, Ly, Lz, mesh_args)
+                solverF.times["Pré-Processamento"] += mesh_create_time
                 tempos_aux[j] = solverF.times
+                t_str = timedelta(seconds = solverF.times["Total"])
+                s = "Test {} of {}: {}".format(j + 1, ntestes, t_str)
+                real_nvols = solverF.nvols
+                #objgraph.show_backrefs([solverF.mesh], filename='sample-mesh.png')_
+                #objgraph.show_refs([solverF], filename='sample-graph.png')
+                del solverF
+                gc.collect()
+                print(s, end = "\r")
             
-            t1 = np.array([t["Montar Malha"] for t in tempos_aux])
-            t2 = np.array([t["Montar Matriz A do TPFA"] for t in tempos_aux])
+            print(" " * len(s), end = "\r")
+            t1 = np.array([t["Pré-Processamento"] for t in tempos_aux])
+            t2 = np.array([t["Montar Sistema TPFA"] for t in tempos_aux])
             t3 = np.array([t["Resolver o Sistema TPFA"] for t in tempos_aux])
             t4 = np.array([t["Total"] for t in tempos_aux])
             tempos[i][0][:] = [t1.min(), t1.mean(), t1.max()]
@@ -219,14 +281,14 @@ def testes_tempo(Lx, Ly, Lz):
             tempos[i][2][:] = [t3.min(), t3.mean(), t3.max()]
             tempos[i][3][:] = [t4.min(), t4.mean(), t4.max()]
 
-            real_nvols = len(solverF.mesh.volumes)
+            
             t_str = timedelta(seconds = time.time() - iter_time)
-            str_i = "0" * (len(str(niteracoes)) - len(str(i))) + str(i)
+            str_i = "0" * (len(str(niteracoes)) - len(str(i + 1))) + str(i + 1)
             str_nvols = "0" * (len(str(nvolsMAX)) - len(str(real_nvols))) + str(real_nvols)
 
             print("Iteration : {}/{}  \t Vols: {} \t Total Time : {}".format(str_i, niteracoes, str_nvols, t_str))
             vols.append(real_nvols)
-            nvols = int(nvols * incremento)
+            nvols = get_next_nvols(nvols, incremento)
         return tempos, vols
     
     sub = {"exemplo1D": "Fluxo Unidimensional",
@@ -256,14 +318,14 @@ def testes_tempo(Lx, Ly, Lz):
         #ax[0][1].plot(vols, tempos[:, 0, 2], linestyle = "dashed", color = c[i])
         ax[0][1].set_xlabel("Número de elementos")
         ax[0][1].set_ylabel("Tempo (s)")
-        ax[0][1].title.set_text("Montar Malha")
+        ax[0][1].title.set_text("Pré-Processamento")
 
         #ax[1][0].plot(vols, tempos[:, 1, 0], linestyle = "dotted", color = c[i])
         ax[1][0].plot(vols, tempos[:, 1, 1], linestyle = "solid", color = c[i], label = sub[f[i].__name__])
         #ax[1][0].plot(vols, tempos[:, 1, 2], linestyle = "dashed", color = c[i])
         ax[1][0].set_xlabel("Número de elementos")
         ax[1][0].set_ylabel("Tempo (s)")
-        ax[1][0].title.set_text("Montar Matriz A")
+        ax[1][0].title.set_text("Montar Sistema TPFA")
 
         #ax[1][1].plot(vols, tempos[:, 2, 0], linestyle = "dotted", color = c[i])
         ax[1][1].plot(vols, tempos[:, 2, 1], linestyle = "solid", color = c[i], label = sub[f[i].__name__])
@@ -281,21 +343,16 @@ def testes_tempo(Lx, Ly, Lz):
             ax[i][j].legend(loc = "upper left")
     plt.tight_layout()
     plt.savefig("./tmp/testes_tempo.png")
-    fp.close()
+    plt.clf()
 
-def testes_precisao(solutions, K_vols, Lx, Ly, Lz):
+def testes_precisao(solutions, K_vols, Lx, Ly, Lz, names):
     # Solutions = tuple([p0, g0, q0], [p1, g1, q1], ...)
-    nvols0 = 100
-    nvolsMAX = int(2e4)
-    incremento = 1.7
-    nvols0 = int(max(nvols0, 1/(incremento - 1) + 1))
-    ntestes = 1
-    tempos = np.zeros(ntestes)
-    niteracoes = int(np.ceil(np.log(float(nvolsMAX)/nvols0) / np.log(incremento))) + 1
-    
+    print("RUNNING PRECISION TESTS")
+
+    nvols0, nvolsMAX, incremento, ntestes, niteracoes = get_tests_args()
+
     solver.verbose = False
 
-    
     def run_iterations(f, pa, ga, qa, K_vols):
         
         nvols = nvols0
@@ -311,92 +368,205 @@ def testes_precisao(solutions, K_vols, Lx, Ly, Lz):
             solver = f(nvols, pa, ga, qa, K_vols, Lx, Ly, Lz)
             solver.times["Total"] = time.time() - total_time
 
-            p_a = solver.mesh.an_sol[:]
-            error = np.sqrt(np.sum((p_a - solver.p)**2 * solver.volumes) / np.sum((p_a**2) * solver.volumes))
-            print("Error:", error)
+            coords = solver.mesh.volumes.center[:]
+            xv, yv, zv = coords[:, 0], coords[:, 1], coords[:, 2]
+            p_a = solver.an_sol(xv, yv, zv)
+            error = np.sum((p_a - solver.p)**2 * solver.volumes) / np.sum((p_a**2) * solver.volumes)
+            print("Error:", np.sqrt(error))
             #print(solver.times)
             #print(np.mean(abs(solver.p - p_a)))
-            erro_medio.append(error)
-            precisao_media.append(1. - error)
+            erro_medio.append(np.sqrt(error))
+            precisao_media.append(1. - np.sqrt(error))
             #print(solver.times)
             
-            real_nvols = len(solver.mesh.volumes)
+            real_nvols = solver.nvols
+            if len(vols) > 0 and real_nvols == vols[-1]:
+                print("ERROR")
+                exit(1)
             vols.append(real_nvols)
+           
 
             t_str = timedelta(seconds = time.time() - iter_time)
             str_i = "0" * (len(str(niteracoes)) - len(str(i + 1))) + str(i + 1)
             str_nvols = "0" * (len(str(nvolsMAX)) - len(str(real_nvols))) + str(real_nvols)
 
             print("Iteration : {}/{}  \t Vols: {} \t Total Time : {}".format(str_i, niteracoes, str_nvols, t_str))
-            nvols = int(nvols * incremento)
+            nvols = get_next_nvols(nvols, incremento)
+            del solver
+            gc.collect()
 
         return precisao_media, erro_medio, vols
     
-    fig, ax = plt.subplots(len(solutions), figsize = (11, 6))
+    n = int(np.ceil(len(solutions) / 2))
+    m = int(np.ceil(len(solutions) / n))
+    fig, ax = plt.subplots(n, m, figsize = (11, 6))
     fig.suptitle("Comparação com Soluções Analíticas")
-    c = ["black", "blue"]
+    c = ["black", "blue", "green", "red", "grey"]
     for i, solution in enumerate(solutions):
         start_time = time.time()
         precisao, erro_medio, vols = run_iterations(exemploAnalitico, solution[0], solution[1], solution[2], K_vols)
-        ax[i].plot(vols, erro_medio, label = "I²rel", color = c[i % len(c)], marker = "o")
-        ax[i].set_title("Função {}".format(i))
-        ax[i].set_xlabel("Número de volumes")
-        ax[i].set_ylabel("I²rel")
-        ax[i].grid()
-        ax[i].legend()
+        a, b = i // m, i % m
+        vols = np.array(vols)
+
+        ax[a][b].set_xscale('log')
+        ax[a][b].set_yscale('log')
+        ax[a][b].plot(vols, erro_medio, label = "I²rel", color = c[i % len(c)])
+
+        #ratio = ax[a][b].get_data_ratio()
+        #scale_vols = erro_medio[0] * 10**(-2 * ratio * (np.log10(vols) - np.log10(vols[0]))) 
+        scale_vols = (erro_medio[0] * (vols[0] ** 2)) / vols ** 2
+    
+        ax[a][b].plot(vols, scale_vols, label = "O(n²)", color = 'purple')
+        ax[a][b].set_title(names[i])
+        ax[a][b].set_xlabel("Número de Elementos")
+        ax[a][b].set_ylabel("I²rel")
+        ax[a][b].grid()
+        ax[a][b].legend()
         print("Total Time : \t {}".format(timedelta(seconds = time.time() - start_time)))
     
     plt.tight_layout()
     plt.savefig("./tmp/testes_precisao.png")
+    plt.clf()
     #plt.show()
 
-def exemplo1(order, Lx, Ly, Lz, meshfile = None):
-    solverA = solver.Solver()
+def testes_memoria(Lx, Ly, Lz):
+    print("RUNNING MEMORY TESTS")
 
-    montar_time = time.time()
-    if not meshfile:
-        meshfile = create_box(Lx, Ly, Lz, order)
-    meshA = solverA.create_mesh(meshfile)
-    solverA.times["Montar Malha"] = time.time() - montar_time
+    nvols0, nvolsMAX, incremento, ntestes, niteracoes = get_tests_args()
 
-    nvols = len(meshA.volumes)
-    K_single = np.array([[1, 0.5, 0, 0.5, 1, 0.5, 0, 0.5, 1]]).reshape((3, 3))
-    K = np.full((solverA.nvols, 3, 3), 1.)
-    #K[:] = K_single
+    solver.verbose = False
     
-    q = np.zeros(nvols)
-    fn = lambda x, y, z: np.full_like(x, 0.)
-    fd = lambda x, y, z: 1 + np.sin(np.pi * x) * np.sin(np.pi * (y + 1/2))  * np.sin(np.pi * (z + 1/3))
+    nvols = nvols0
+    vols = []
+    memory = []
+    for i in range(niteracoes):
+        meshfile = create_box(Lx, Ly, Lz, nvols)
+        mesh_args = get_args_mesh(meshfile)
+        tempos_aux = np.empty(ntestes, dtype = object)
+        log_filename = 'temp_memory.log'
+        fp = open(log_filename,'w+')
+        
+        s = ""
+        @profile(stream=fp)
+        def run_tests(j, s):
+            total_time = time.time()
+            solverF = exemplo3D(nvols, Lx, Ly, Lz, mesh_args)
+            t_str = timedelta(seconds = time.time() - total_time)
+            s = "Test {} of {}: {}".format(j + 1, ntestes, t_str)
+            print(s, end = "\r")
+            return solverF, s
+        
+        iter_time = time.time()
+        for j in range(ntestes):
+            solverF, s = run_tests(j, s)
+            real_nvols = solverF.nvols
+            del solverF
+            gc.collect()
+        t_str = timedelta(seconds = time.time() - iter_time)
 
-    p = solverA.solve(meshA, K, q, fd, fn, create_vtk = solver.verbose, check = False, an_sol = fd)
-    
-    return solverA
+        print(" " * len(s), end = "\r")
+        fp.close()
+
+        # pattern to match the memory usage
+        memory_aux = []
+        with open(log_filename, 'r+') as f:
+            for line in f:
+                #print(line)
+                #print("AAA")
+                if 'solverF = exemplo3D(nvols, Lx, Ly, Lz, mesh_args)' in line:
+                    match = re.findall(r'\b(\d+\.\d+\s*(?:MiB|GiB))\b', line)
+                    #print(match)
+                    if match:
+                        size_str = match[1]
+                        size_str = size_str.strip()
+                        if size_str.endswith('MiB'):
+                            size_bytes = int(float(size_str[:-3]) * 1024 * 1024)
+                        elif size_str.endswith('GiB'):
+                            size_bytes = int(float(size_str[:-3]) * 1024 * 1024 * 1024)
+                        else:
+                            size_bytes = int(size_str)
+                        memory_aux.append(size_bytes)
+                        print(f'{size_str} = {size_bytes} bytes')
+            f.truncate(0)
+        str_i = "0" * (len(str(niteracoes)) - len(str(i + 1))) + str(i + 1)
+        str_nvols = "0" * (len(str(nvolsMAX)) - len(str(real_nvols))) + str(real_nvols)
+
+        print("Iteration : {}/{} \t Vols: {} \t Total Time : {}".format(str_i, niteracoes, str_nvols, t_str))
+        vols.append(real_nvols)
+        memory.append(np.mean(memory_aux))
+        nvols = get_next_nvols(nvols, incremento)
+    plt.grid()
+    plt.xlabel("Número de Volumes")
+    plt.ylabel("Memória Alocada pela Simulação (MBs)")
+    plt.plot(vols, np.array(memory) / 1e6, label = "Memória por Número de Elementos")
+    plt.xscale('log')
+    plt.tight_layout()
+    plt.legend()
+    plt.savefig("./tmp/testes_memoria.png")
+    plt.clf()
+
+def get_args_mesh(meshfile):
+    aux_solver = solver.Solver()
+    aux_mesh = aux_solver.create_mesh(meshfile)
+    return np.array([meshfile, aux_solver.areas, aux_solver.volumes], dtype=object)
+
+def get_tests_args():
+    nvols0 = 4 ** 3
+    nvolsMAX = 9 ** 3
+    incremento = 1.1
+    ntestes = 10
+    niteracoes = int((nvolsMAX ** (1/3) - nvols0 ** (1/3) + 1)) 
+
+    return nvols0, nvolsMAX, incremento, ntestes, niteracoes
+
+def get_next_nvols(nvols, incremento):
+    return int(np.ceil((nvols ** (1/3)) + incremento) ** 3)
+
 if __name__ == '__main__':
     solver.verbose = True
-    Lx, Ly, Lz = 1., 1., 1.
-    order = 100
-    #exemplo1D(order, Lx, Ly, Lz, "./mesh/20.h5m")
+    Lx, Ly, Lz = 1., 2., 3.
+    order = 10
+    #exemplo1D(order, Lx, Ly, Lz)
     #exemplo2D(order, Lx, Ly, Lz)
     #exemplo3D(order, Lx, Ly, Lz)
     #exemploAleatorio(order, Lx, Ly, Lz)
     #exemplo1(order, Lx, Ly, Lz)
     #exit()
-    K_vols = 1.
-    pa1 = lambda x, y, z: np.sin(x) + np.cos(y) + np.exp(z)
-    ga1 = lambda x, y, z: np.array([np.cos(x), -np.sin(y), np.exp(z)]).T
-    qa1 = lambda x, y, z: -K_vols * (-np.sin(x) - np.cos(y) + np.exp(z))
+    ex, ey, ez = 1., 2., 3.
+    K = solver.get_tensor(1., ())
+    K[:, 0] = np.array([ex, 0, 0])
+    K[:, 1] = np.array([0, ey, 0])
+    K[:, 2] = np.array([0, 0, ez])
 
-    pa2 = lambda x, y, z: x**2 + y**2 + z**2
-    ga2 = lambda x, y, z: np.array([2*x, 2*y, 2*z]).T
-    qa2 = lambda x, y, z: -K_vols * (2) * np.ones_like(x)
+    names = ["x + y + z", "sin(x) + cos(y) + exp(z)", "x³ + y³ + z³", "xln(x) + 1/(y+1) + z²"]
+    pa1 = lambda x, y, z:       x + y + z
+    ga1 = lambda x, y, z:       np.array([np.ones_like(x), np.ones_like(y), np.ones_like(z)]).T
+    qa1 = lambda x, y, z, K:    0
 
-    pa3 = lambda x, y, z: x + y + z
-    ga3 = lambda x, y, z: np.ones(shape = (len(x), 3))
-    qa3 = lambda x, y, z: -K_vols * (0)
+    pa2 = lambda x, y, z:       np.sin(x) + np.cos(y) + np.exp(z) # sin(x) + cos(y) + exp(z)
+    ga2 = lambda x, y, z:       np.array([np.cos(x), -np.sin(y), np.exp(z)]).T
+    qa2 = lambda x, y, z, K:    -(-K[:,0,0] * np.sin(x) - K[:,1,1] * np.cos(y) + K[:,2,2] * np.exp(z))
+
+    pa3 = lambda x, y, z:       x**3 + y**3 + z**3 # x³ + y³ + z³
+    ga3 = lambda x, y, z:       np.array([3*(x**2), 3*(y**2), 3*(z**2)]).T
+    qa3 = lambda x, y, z, K:    -6 * (K[:,0,0] * x + K[:,1,1] * y + K[:,2,2] * z)
+
+    pa4 = lambda x, y, z:       (x + 1) * np.log(1 + x) + 1/(y + 1) + z**2 # xln(x) + 1/(y+1) + z²
+    ga4 = lambda x, y, z:       np.array([np.log(1 + x) + 1,-1/(y+1)**2, 2*z]).T
+    qa4 = lambda x, y, z, K:    -(K[:,0,0] * (1/(x+1)) + K[:,1,1] * (2/(y+1)**3) + K[:,2,2] * 2)
+
+    pa5 = lambda x, y, z:       np.exp(x) + np.exp(y) + np.exp(z) # sin(x) + sin(y) + sin(z)
+    ga5 = lambda x, y, z:       np.array([np.exp(x), np.exp(y), np.exp(z)]).T
+    qa5 = lambda x, y, z, K:    -(K[:,0,0] * np.exp(x) + K[:,1,1] * np.exp(y) + K[:,2,2] * np.exp(z))
     
-    #exemploAnalitico(order, pa1, ga1, qa1, K_vols, Lx, Ly, Lz)
-    testes_tempo(Lx, Ly, Lz)
-    #testes_precisao([(pa1, ga1, qa1), (pa2, ga2, qa2), (pa3, ga3, qa3)], K_vols, Lx, Ly, Lz)
+    #exemploAnalitico(order, pa1, ga1, qa1, K, Lx, Ly, Lz)
+    
+    #testes_memoria(Lx, Ly, Lz)
+    #testes_tempo(Lx, Ly, Lz)
+    
+    solutions = [(pa1, ga1, qa1), (pa2, ga2, qa2), (pa3, ga3, qa3), (pa4, ga4, qa4)]
+    #solutions = [(pa5, ga5, qa5)]
+    testes_precisao(solutions, K, Lx, Ly, Lz, names)
     exit()
     meshfiles = ["./mesh/20.h5m", "./mesh/30.h5m"] #,"./mesh/40.h5m", "./mesh/50.h5m", "./mesh/60.h5m", "./mesh/80.h5m"]
     sz = {meshfiles[0]: (20, 20, 20),
