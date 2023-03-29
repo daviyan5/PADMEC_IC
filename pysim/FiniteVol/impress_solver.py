@@ -55,6 +55,7 @@ class Solver:
         self.A = None
         self.b = None
         self.p = None
+        self.permeability = None
         
     def create_mesh(self, meshfile):
         if type(meshfile) == str:
@@ -96,7 +97,10 @@ class Solver:
     
         K = np.flip(K, axis = 0)
         K = np.reshape(K, (self.nvols, 9))
-        self.mesh.permeability[:] = K
+        
+        self.permeability = K
+        for i in range(self.nvols):
+            self.mesh.permeability[i] = K[i]
 
         self._assemble_normal_vectors()
         self._assemble_faces_transmissibilities()
@@ -152,6 +156,9 @@ class Solver:
         else:
             vR = None
 
+        #N = np.cross(i - j, k - j) # Vetor Normal a Face 
+        #N_test = np.sign(np.einsum("ij,ij->i", vL, N))
+        #i[N_test < 0], k[N_test < 0] = k[N_test < 0], i[N_test < 0]
         N = np.cross(i - j, k - j) # Vetor Normal a Face 
         orientation = np.sign(np.einsum("ij,ij->i", N, vL))
         N[orientation < 0] = -N[orientation < 0]
@@ -183,8 +190,8 @@ class Solver:
         
         n_vols_pairs = len(self.vols_pairs)
 
-        KL = self.mesh.permeability[self.vols_pairs[:, 0]].reshape((n_vols_pairs, 3, 3))
-        KR = self.mesh.permeability[self.vols_pairs[:, 1]].reshape((n_vols_pairs, 3, 3))
+        KL = self.permeability[self.vols_pairs[:, 0]].reshape((n_vols_pairs, 3, 3))
+        KR = self.permeability[self.vols_pairs[:, 1]].reshape((n_vols_pairs, 3, 3))
 
         KnL = np.einsum("ij,ikj->ik", self.N_norm, KL) # Normal Components
         KnR = np.einsum("ij,ikj->ik", self.N_norm, KR) 
@@ -256,13 +263,13 @@ class Solver:
             self.d_nodes = d_nodes
 
             N, vL, vR = self._get_normal(d_nodes, d_volumes)
-            N_norm = np.abs(N) / np.linalg.norm(N, axis = 1).reshape((len(N), 1))
+            N_norm = N / np.linalg.norm(N, axis = 1).reshape((len(N), 1))
 
             Area = self.areas[d_nodes]
             
             h = np.abs(np.einsum("ij,ij->i", N_norm, vL))
 
-            K = self.mesh.permeability[d_volumes].reshape((len(d_volumes), 3, 3))
+            K = self.permeability[d_volumes].reshape((len(d_volumes), 3, 3))
             K = np.einsum("ij,ikj->ik", N_norm, K)
             K = np.einsum("ij,ij->i", N_norm, K)
             

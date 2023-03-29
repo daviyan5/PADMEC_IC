@@ -170,7 +170,7 @@ def exemploAnalitico(order, pa, ga, qa, K_vols, Lx, Ly, Lz, meshfile = None):
         ax.scatter(xv, yv, zv, c = p, cmap = 'jet')
         # Add Values on the plot
         for i in range(len(xv)):
-            ax.text(xv[i], yv[i], zv[i], str(np.round(p[i], 4)), size = 5, zorder = 1, color = 'k')
+            ax.text(xv[i], yv[i], zv[i], str(np.round(p[i], 5)), size = 5, zorder = 1, color = 'k')
         ax.title.set_text('Solução numérica')
         ax.set_xlabel('x')
         ax.set_ylabel('y')
@@ -181,7 +181,7 @@ def exemploAnalitico(order, pa, ga, qa, K_vols, Lx, Ly, Lz, meshfile = None):
         ax.scatter(xv, yv, zv, c = pa(xv, yv, zv), cmap = 'jet')
         # Add Values on the plot
         for i in range(len(xv)):
-            ax.text(xv[i], yv[i], zv[i], str(np.round(pa(xv[i], yv[i], zv[i]), 4)), size = 5, zorder = 1, color = 'k')
+            ax.text(xv[i], yv[i], zv[i], str(np.round(pa(xv[i], yv[i], zv[i]), 5)), size = 5, zorder = 1, color = 'k')
 
         ax.title.set_text('Solução analítica')
         ax.set_xlabel('x')
@@ -513,7 +513,7 @@ def get_args_mesh(meshfile):
 def get_tests_args():
     nvols0 = 4 ** 3
     nvolsMAX = 9 ** 3
-    incremento = 1.1
+    incremento = 3
     ntestes = 10
     niteracoes = int((nvolsMAX ** (1/3) - nvols0 ** (1/3) + 1)) 
 
@@ -524,7 +524,7 @@ def get_next_nvols(nvols, incremento):
 
 if __name__ == '__main__':
     solver.verbose = True
-    Lx, Ly, Lz = 1., 2., 3.
+    Lx, Ly, Lz = 1., 1., 1.
     order = 10
     #exemplo1D(order, Lx, Ly, Lz)
     #exemplo2D(order, Lx, Ly, Lz)
@@ -532,7 +532,7 @@ if __name__ == '__main__':
     #exemploAleatorio(order, Lx, Ly, Lz)
     #exemplo1(order, Lx, Ly, Lz)
     #exit()
-    ex, ey, ez = 1., 2., 3.
+    ex, ey, ez = 1., 1., 1.
     K = solver.get_tensor(1., ())
     K[:, 0] = np.array([ex, 0, 0])
     K[:, 1] = np.array([0, ey, 0])
@@ -555,18 +555,18 @@ if __name__ == '__main__':
     ga4 = lambda x, y, z:       np.array([np.log(1 + x) + 1,-1/(y+1)**2, 2*z]).T
     qa4 = lambda x, y, z, K:    -(K[:,0,0] * (1/(x+1)) + K[:,1,1] * (2/(y+1)**3) + K[:,2,2] * 2)
 
-    pa5 = lambda x, y, z:       np.exp(x) + np.exp(y) + np.exp(z) # sin(x) + sin(y) + sin(z)
-    ga5 = lambda x, y, z:       np.array([np.exp(x), np.exp(y), np.exp(z)]).T
-    qa5 = lambda x, y, z, K:    -(K[:,0,0] * np.exp(x) + K[:,1,1] * np.exp(y) + K[:,2,2] * np.exp(z))
+    pa5 = lambda x, y, z:       np.exp(x)
+    ga5 = lambda x, y, z:       np.array([np.exp(x), 0, 0]).T
+    qa5 = lambda x, y, z, K:    -(K[:,0,0] * np.exp(x) + K[:,1,1] * 0 + K[:,2,2] * 0)
     
-    #exemploAnalitico(order, pa1, ga1, qa1, K, Lx, Ly, Lz)
+    exemploAnalitico(order, pa5, ga4, qa4, K, Lx, Ly, Lz)
     
     #testes_memoria(Lx, Ly, Lz)
     #testes_tempo(Lx, Ly, Lz)
     
     solutions = [(pa1, ga1, qa1), (pa2, ga2, qa2), (pa3, ga3, qa3), (pa4, ga4, qa4)]
     #solutions = [(pa5, ga5, qa5)]
-    testes_precisao(solutions, K, Lx, Ly, Lz, names)
+    #testes_precisao(solutions, K, Lx, Ly, Lz, names)
     exit()
     meshfiles = ["./mesh/20.h5m", "./mesh/30.h5m"] #,"./mesh/40.h5m", "./mesh/50.h5m", "./mesh/60.h5m", "./mesh/80.h5m"]
     sz = {meshfiles[0]: (20, 20, 20),
