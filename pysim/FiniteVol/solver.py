@@ -37,6 +37,9 @@ class Solver:
         self.A = None
         self.b = None
         self.p = None
+        self.A_d = None
+        self.b_d = None
+        self.b_n = None
     
     def create_mesh(self, nx, ny, nz, dx, dy, dz, name = "mesh"):
         self.mesh = Mesh()
@@ -67,26 +70,43 @@ class Solver:
         self.volumes_trans = (np.trace(self.volumes_trans_tensor, axis1=3, axis2=4)/3).flatten()
     
 
-        Kh = 2 / (1/K[:, :, 1:, 0, 0] + 1/K[:, :, :-1, 0, 0])
-        Kh = np.insert(Kh,  0, K[:, :, 0, 0, 0], axis = 2)
-        Kh = np.insert(Kh, Kh.shape[2], K[:, :, -1, 0, 0], axis = 2)
-        faces_trans_h = self.mesh.Sh * np.flip(Kh, 1).flatten() / self.mesh.dx / 2
+        # Kh = 2 / (1/K[:, :, 1:, 0, 0] + 1/K[:, :, :-1, 0, 0])
+        # Kh = np.insert(Kh,  0, K[:, :, 0, 0, 0], axis = 2)
+        # Kh = np.insert(Kh, Kh.shape[2], K[:, :, -1, 0, 0], axis = 2)
+        # faces_trans_h = self.mesh.Sh * np.flip(Kh, 1).flatten() / (self.mesh.dx / 2) 
+# 
+        # faces_trans_l = np.empty((0))
+        # Kl = 2 / (1/K[:, 1:, :, 1, 1] + 1/K[:, :-1, :, 1, 1])
+        # Kl = np.insert(Kl,  0, K[:, 0, :, 1, 1], axis = 1)
+        # Kl = np.insert(Kl, Kl.shape[1], K[:, -1, :, 1, 1], axis = 1)
+        # faces_trans_l = self.mesh.Sl * np.flip(Kl, 1).flatten() / (self.mesh.dy / 2) 
+# 
+        # faces_trans_w = np.empty((0))
+        # Kw = 2 / (1/K[1:, :, :, 2, 2] + 1/K[:-1, :, :, 2, 2])
+        # Kw = np.insert(Kw,  0, K[0, :, :, 2, 2], axis = 0)
+        # Kw = np.insert(Kw, Kw.shape[0], K[-1, :, :, 2, 2], axis = 0)
+        # faces_trans_w = self.mesh.Sw * np.flip(Kw, 1).flatten() / (self.mesh.dz / 2) 
 
-        faces_trans_l = np.empty((0))
-        Kl = 2 / (1/K[:, 1:, :, 1, 1] + 1/K[:, :-1, :, 1, 1])
-        Kl = np.insert(Kl,  0, K[:, 0, :, 1, 1], axis = 1)
-        Kl = np.insert(Kl, Kl.shape[1], K[:, -1, :, 1, 1], axis = 1)
-        faces_trans_l = self.mesh.Sl * np.flip(Kl, 1).flatten() / self.mesh.dy / 2
-
-        faces_trans_w = np.empty((0))
-        Kw = 2 / (1/K[1:, :, :, 2, 2] + 1/K[:-1, :, :, 2, 2])
-        Kw = np.insert(Kw,  0, K[0, :, :, 2, 2], axis = 0)
-        Kw = np.insert(Kw, Kw.shape[0], K[-1, :, :, 2, 2], axis = 0)
-        faces_trans_w = self.mesh.Sw * np.flip(Kw, 1).flatten() / self.mesh.dz / 2
+        volumes_pairs = self.mesh.faces.adjacents[:]
         
-        self.faces_trans = np.hstack((faces_trans_h, faces_trans_l, faces_trans_w))
-        self.faces_trans = np.hstack((-self.faces_trans, -self.faces_trans))
+        K = np.flip(K, 1)
+        K = K.flatten().reshape(self.mesh.nvols, 3, 3)
+        
+        KL = K[volumes_pairs[:, 0]]
+        KR = K[volumes_pairs[:, 1]]
 
+        KnL = np.einsum("ij,ikj->ik", self.mesh.faces.normal, KL) 
+        KnR = np.einsum("ij,ikj->ik", self.mesh.faces.normal, KR) 
+
+        KnL = np.einsum("ij,ij->i", self.mesh.faces.normal, KnL) 
+        KnR = np.einsum("ij,ij->i", self.mesh.faces.normal, KnR) 
+        
+        hl = self.mesh.volumes.volume / self.mesh.faces.areas 
+        hr = self.mesh.volumes.volume / self.mesh.faces.areas
+        self.faces_trans = 2 * self.mesh.faces.areas * (KnL * KnR) / ((KnL * hl) + (KnR * hr))
+        
+        self.faces_trans = np.hstack((-self.faces_trans, -self.faces_trans))
+        
         self.mesh.times["Montar Transmissibilidade das Faces"] = time.time() - start_time
         if verbose: 
             print("Time to assemble faces T: \t\t", round(self.mesh.times["Montar Transmissibilidade das Faces"], 5), "s")
@@ -148,8 +168,17 @@ class Solver:
             self.d_values = d_values
             self.d_nodes = d_nodes
             
-            self.A[volumes, volumes] -= self.faces_trans[d_nodes]
-            self.b[volumes] -= d_values * self.faces_trans[d_nodes]
+            #self.A[volumes, volumes] -= self.faces_trans[d_nodes]
+            #self.b[volumes] -= d_values * self.faces_trans[d_nodes]
+
+            self.A_d = np.zeros(self.mesh.nvols)
+            np.add.at(self.A_d, volumes, -self.faces_trans[d_nodes])
+            row = np.arange(self.mesh.nvols)
+            col = np.arange(self.mesh.nvols)
+            self.A_d = csr_matrix((self.A_d, (row, col)), shape=(self.mesh.nvols, self.mesh.nvols))
+
+            self.b_d = np.zeros(self.mesh.nvols)
+            np.add.at(self.b_d, volumes, -d_values * self.faces_trans[d_nodes])
 
         elif bc == "neumann":
             x, y, z = self.mesh.faces._get_coords_from_index(self.mesh.faces.boundary)
@@ -162,9 +191,10 @@ class Solver:
 
             self.n_values = n_values
             self.n_nodes = n_nodes
-
+            self.b_n = np.zeros(self.mesh.nvols)
             volumes = self.mesh.faces.adjacents[n_nodes][:, 0]
-            self.b[volumes] += n_values * self.mesh.volume
+            #self.b[volumes] += n_values * self.mesh.volume
+            np.add.at(self.b_n, volumes, n_values * self.mesh.volume)
         
         self.mesh.times["Condição de contorno - {}".format((bc))] = time.time() - start_time
         if verbose: 
@@ -183,14 +213,14 @@ class Solver:
         else:
             self.A.eliminate_zeros()
             start_time = time.time()
-            self.p = pd_spsolve(self.A, self.b)
+            self.p = pd_spsolve(self.A + self.A_d, self.b + self.b_d + self.b_n)
         np.set_printoptions(suppress=True)
-        #print(self.A.todense())
-        #print(self.p)
-        #print(self.b)
+        print((self.A).todense())
+        print(self.p)
+        print(self.b)
         if check:
             check_time = time.time()
-            assert np.allclose(self.A.dot(self.p), self.b)
+            assert np.allclose((self.A + self.A_d).dot(self.p), self.b + self.b_d + self.b_n)
             print("CHECK ({}): TPFA system solved correctly".format(round(time.time() - check_time,5)))
 
         

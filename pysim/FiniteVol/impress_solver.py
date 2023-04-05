@@ -50,6 +50,7 @@ class Solver:
         self.internal_faces = None
         self.vols_pairs = None
         self.mesh = None
+        self.faces_by_volume = None
 
         self.times = {}
         self.A = None
@@ -57,23 +58,31 @@ class Solver:
         self.p = None
         self.permeability = None
         
-    def create_mesh(self, meshfile):
+    def create_mesh(self, meshfile, dim = 3):
         if type(meshfile) == str:
             block_print()
-            self.mesh = FineScaleMesh(meshfile)
+            self.mesh = FineScaleMesh(meshfile, dim = dim)
             self.nvols = len(self.mesh.volumes)
             enable_print()
-            self.areas = np.array(self.mesh.faces.area[:])
-            faces_by_volume = self.mesh.volumes.bridge_adjacencies(self.mesh.volumes.all, 3, 2)
-            nfaces = len(faces_by_volume[0])
-            if nfaces == 6:
-                faces_flat = faces_by_volume.flatten()
-                area_by_face = self.areas[faces_flat].reshape((self.nvols, nfaces))
-                self.volumes = np.prod(area_by_face, axis = 1) ** (1 / 4)
+
+            faces_nodes = self.mesh.faces.connectivities[:]
+            i = self.mesh.nodes.coords[faces_nodes[:, 0]]
+            j = self.mesh.nodes.coords[faces_nodes[:, 1]]
+            k = self.mesh.nodes.coords[faces_nodes[:, 2]]
+            self.normal_vectors = np.cross(j - i, k - i)
+            self.areas = np.linalg.norm(self.normal_vectors, axis = 1)
+            # self.areas = np.array(self.mesh.faces.area[:])
+            self.faces_by_volume = self.mesh.volumes.bridge_adjacencies(self.mesh.volumes.all, 3, 2)
+            nfaces = len(self.faces_by_volume[0])
+            if nfaces == 6 and dim == 3:
+                faces_flat = self.faces_by_volume.flatten()
+                self.area_by_face = self.areas[faces_flat].reshape((self.nvols, nfaces))
+                self.volumes = np.prod(self.area_by_face, axis = 1) ** (1 / 4)
                 #assert np.allclose(self.volumes, np.array(self.mesh.volumes.volume[:]))
                 
             else:
                 self.volumes = np.array(self.mesh.volumes.volume[:])
+            return self.mesh
         else:
             block_print()
             self.mesh = FineScaleMesh(meshfile[0])
@@ -81,9 +90,8 @@ class Solver:
             enable_print()
             self.areas = np.array(meshfile[1])
             self.volumes = np.array(meshfile[2])
-
         
-        return self.mesh
+            return self.mesh
     
     def solve(self, mesh, K, q, fd, fn, create_vtk = False, check = False, an_sol = None, name = "IMPRESS"):
         self.name = name
@@ -120,7 +128,7 @@ class Solver:
         if an_sol and create_vtk:
             coords = self.mesh.volumes.center[:]
             x, y, z = coords[:, 0], coords[:, 1], coords[:, 2]
-            
+
             self.mesh.an_sol[:] = an_sol(x, y, z)
             self.mesh.error[:] = ((an_sol(x, y, z) - self.p) ** 2  * self.volumes) / (an_sol(x, y, z) * self.volumes) 
             self._create_vtk()
@@ -130,7 +138,7 @@ class Solver:
             self.an_sol = an_sol
         return self.p
 
-    def _get_normal(self, faces_index, volumes_pairs = None):
+    def _get_normal(self, faces_index, volumes_pairs = None, swap = False):
         faces_nodes = self.mesh.faces.connectivities[faces_index]
 
         i = self.mesh.nodes.coords[faces_nodes[:, 0]]
@@ -156,12 +164,12 @@ class Solver:
         else:
             vR = None
 
-        #N = np.cross(i - j, k - j) # Vetor Normal a Face 
-        #N_test = np.sign(np.einsum("ij,ij->i", vL, N))
-        #i[N_test < 0], k[N_test < 0] = k[N_test < 0], i[N_test < 0]
+        if swap:
+            N = np.cross(i - j, k - j) 
+            N_test = np.sign(np.einsum("ij,ij->i", vL, N))
+            i[N_test < 0], k[N_test < 0] = k[N_test < 0], i[N_test < 0]
         N = np.cross(i - j, k - j) # Vetor Normal a Face 
-        orientation = np.sign(np.einsum("ij,ij->i", N, vL))
-        N[orientation < 0] = -N[orientation < 0]
+        
 
         return N, vL, vR
     
@@ -172,11 +180,14 @@ class Solver:
         start_time = time.time()
 
         N, vL, vR = self._get_normal(self.internal_faces, self.vols_pairs)
-        self.N_norm = N / np.linalg.norm(N, axis = 1).reshape((len(N), 1))
-
+        # self.N_norm = np.abs(N) /np.linalg.norm(N, axis = 1).reshape((len(N), 1))
+        self.N = np.abs(N)
+        self.Ns = np.linalg.norm(N, axis = 1)
+        N_sign = np.sign(np.einsum("ij,ij->i", vL, self.N))
+        (self.vols_pairs[N_sign < 0, 0], self.vols_pairs[N_sign < 0, 1]) = (self.vols_pairs[N_sign < 0, 1], self.vols_pairs[N_sign < 0, 0])
        
-        self.h_L = np.abs(np.einsum("ij,ij->i", self.N_norm, vL)) # Row-wise dot product
-        self.h_R = np.abs(np.einsum("ij,ij->i", self.N_norm, vR))
+        self.h_L = np.abs(np.einsum("ij,ij->i", self.N, vL)) / self.Ns # Row-wise dot product
+        self.h_R = np.abs(np.einsum("ij,ij->i", self.N, vR)) / self.Ns
 
         self.times["Montar Vetores Normais"] = time.time() - start_time
         if verbose: 
@@ -193,15 +204,15 @@ class Solver:
         KL = self.permeability[self.vols_pairs[:, 0]].reshape((n_vols_pairs, 3, 3))
         KR = self.permeability[self.vols_pairs[:, 1]].reshape((n_vols_pairs, 3, 3))
 
-        KnL = np.einsum("ij,ikj->ik", self.N_norm, KL) # Normal Components
-        KnR = np.einsum("ij,ikj->ik", self.N_norm, KR) 
+        KnL = np.einsum("ij,ikj->ik", self.N, KL) # Normal Components
+        KnR = np.einsum("ij,ikj->ik", self.N, KR) 
 
-        KnL = np.einsum("ij,ij->i", self.N_norm, KnL) 
-        KnR = np.einsum("ij,ij->i", self.N_norm, KnR) 
+        KnL = np.einsum("ij,ij->i", self.N, KnL) / self.Ns ** 2
+        KnR = np.einsum("ij,ij->i", self.N, KnR) / self.Ns ** 2
 
         Keq = (KnL * KnR) / ((KnL * self.h_R) + (KnR * self.h_L))
-        self.faces_trans = Keq * self.areas[self.internal_faces]
-
+        self.faces_trans = Keq * self.Ns
+       
         self.times["Montar Transmissibilidade das Faces"] = time.time() - start_time
         if verbose: 
             print("Time to assemble faces T: \t\t", round(self.times["Montar Transmissibilidade das Faces"], 5), "s")
@@ -218,7 +229,6 @@ class Solver:
         row_index = np.hstack((row_index_p, col_index_p))
         col_index = np.hstack((col_index_p, row_index_p))
         data = np.hstack((-self.faces_trans, -self.faces_trans))
-
         self.A = csr_matrix((data, (row_index, col_index)), 
                              shape=(self.nvols, self.nvols))
         self.b = np.array(q, dtype=float)
@@ -246,13 +256,26 @@ class Solver:
         start_time = time.time()
         if bc == "dirichlet":
             coords = self.mesh.faces.center[self.boundary_faces]
-            x, y, z = coords[:, 0], coords[:, 1], coords[:, 2]
+            faces_nodes = self.mesh.faces.connectivities[self.boundary_faces]
 
-            d_values = f(x, y, z)
+            i = self.mesh.nodes.coords[faces_nodes[:, 0]]
+            j = self.mesh.nodes.coords[faces_nodes[:, 1]]
+            k = self.mesh.nodes.coords[faces_nodes[:, 2]]
+            l = self.mesh.nodes.coords[faces_nodes[:, 3]]
+
+            x, y, z = coords[:, 0], coords[:, 1], coords[:, 2]
+            xi, yi, zi = i[:, 0], i[:, 1], i[:, 2]
+            xj, yj, zj = j[:, 0], j[:, 1], j[:, 2]
+            xk, yk, zk = k[:, 0], k[:, 1], k[:, 2]
+            xl, yl, zl = l[:, 0], l[:, 1], l[:, 2]
+
+            d_values = (f(x, y, z)) #+ f(xi, yi, zi) + f(xj, yj, zj) + f(xk, yk, zk) + f(xl, yl, zl)) / 5
             d_nodes = self.boundary_faces[d_values != None]
             d_values = d_values[d_values != None].astype('float')
             
             mask = np.isin(d_nodes, self.boundary_without_conditions)
+            #if not False in mask:
+                #mask[np.random.randint(0, len(mask) - 1)] = False
             d_nodes = d_nodes[mask == True]
             d_values = d_values[mask == True]
             self.boundary_without_conditions = np.setdiff1d(self.boundary_without_conditions, d_nodes)
@@ -262,28 +285,27 @@ class Solver:
             self.d_values = d_values
             self.d_nodes = d_nodes
 
-            N, vL, vR = self._get_normal(d_nodes, d_volumes)
-            N_norm = N / np.linalg.norm(N, axis = 1).reshape((len(N), 1))
-
-            Area = self.areas[d_nodes]
+            N, vL, vR = self._get_normal(d_nodes, d_volumes, swap = True)
+            #N = np.abs(N)
+            Ns = np.linalg.norm(N, axis = 1)
             
-            h = np.abs(np.einsum("ij,ij->i", N_norm, vL))
+            h = np.abs(np.einsum("ij,ij->i", N, vL)) / Ns
 
             K = self.permeability[d_volumes].reshape((len(d_volumes), 3, 3))
-            K = np.einsum("ij,ikj->ik", N_norm, K)
-            K = np.einsum("ij,ij->i", N_norm, K)
+            K = np.einsum("ij,ikj->ik", N, K)
+            K = np.einsum("ij,ij->i", N, K) / Ns ** 2
             
             
-            np.add.at(self.A_d, d_volumes, (K * Area) / h)
-
+            np.add.at(self.A_d, d_volumes, (K * Ns) / (1 * h))
+            
             row_index = np.arange(self.nvols)
             col_index = np.arange(self.nvols)
             
             self.A_d = csr_matrix((self.A_d, (row_index, col_index)), 
                                    shape=(self.nvols, self.nvols))
             
-            np.add.at(self.b_d, d_volumes, d_values * (K * Area) / h)
-            self.d_N_norm = N_norm
+            np.add.at(self.b_d, d_volumes, d_values * (K * Ns) / (1 * h))
+            self.d_N_norm = Ns
             
 
         elif bc == "neumann":
@@ -299,11 +321,11 @@ class Solver:
             n_values = n_values[mask == True]
             self.boundary_without_conditions = np.setdiff1d(self.boundary_without_conditions, n_nodes)
 
-            if len(n_nodes) > 1:
+            if len(n_nodes):
                 n_volumes = self.mesh.faces.bridge_adjacencies(n_nodes, 2, 3).astype('int').flatten()
                 self.n_values = n_values
                 self.n_nodes = n_nodes
-                np.add.at(self.b_n, n_volumes, n_values * self.volumes[n_volumes])
+                np.add.at(self.b_n, n_volumes, -n_values * self.volumes[n_volumes])
                 #self.b_n[n_volumes] += (n_values * self.volumes[n_volumes])
 
         self.times["Condição de contorno - {}".format((bc))] = time.time() - start_time
@@ -322,7 +344,7 @@ class Solver:
             self.p = np.linalg.solve(self.A, self.b)
         else:
             self.A.eliminate_zeros()
-            #self.A_d.eliminate_zeros()
+            self.A_d.eliminate_zeros()
             start_time = time.time()
             self.p = spsolve(self.A + self.A_d, self.b + self.b_d + self.b_n)
         np.set_printoptions(suppress=True)
@@ -347,7 +369,8 @@ class Solver:
         
         self.mesh.nu_sol[:] = self.p
         self.mesh.flux[:] = self.b + self.b_d + self.b_n
-        self.mesh.x, self.mesh.y, self.mesh.z = x, y, z
+        
+
         self.mesh.core.mb.add_entities(meshset, self.mesh.core.all_volumes)
         #self.mesh.core.mb.add_entities(meshset, self.mesh.core.all_faces)
         self.mesh.core.mb.write_file("./mesh_{}.vtk".format(self.name), [meshset])

@@ -88,7 +88,7 @@ def legacy_create_box(Lx, Ly, Lz, lc, filename=None, visualize=False):
     gmsh.finalize()
     return filename
 
-def create_box(Lx, Ly, Lz, nvols_order, visualize = False, filename = None):
+def create_box(Lx, Ly, Lz, nvols_order, factor = 0.4, dim = 3,  visualize = False, filename = None):
     gmsh.initialize()
 
     if not visualize:
@@ -96,7 +96,11 @@ def create_box(Lx, Ly, Lz, nvols_order, visualize = False, filename = None):
     gmsh.model.add("box")
 
     
-    v1 = gmsh.model.occ.addBox(0, 0, 0, Lx, Ly, Lz)
+    if dim == 3:
+        v1 = gmsh.model.occ.addBox(0, 0, 0, Lx, Ly, Lz)
+    elif dim == 2:
+        v1 = gmsh.model.occ.addRectangle(0, 0, 0, Lx, Ly)
+    
     gmsh.model.occ.synchronize()
 
     """
@@ -113,9 +117,9 @@ def create_box(Lx, Ly, Lz, nvols_order, visualize = False, filename = None):
     #"""
     import numpy as np
     vols_axis = int(nvols_order ** (1/3))
-    factor = 0.4
     mn = min(Lx, Ly, Lz) ** (factor) 
     mx = max(Lx, Ly, Lz) ** (factor)
+    mn = mx = (mn + mx) / 2
     gmsh.option.setNumber("Mesh.CharacteristicLengthMin", mn / vols_axis)
     gmsh.option.setNumber("Mesh.CharacteristicLengthMax", mx / vols_axis)
     

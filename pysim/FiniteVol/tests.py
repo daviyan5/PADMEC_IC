@@ -8,7 +8,7 @@ from datetime import timedelta
 
 def exemplo1D(nx, ny, nz):
 
-    Lx, Ly, Lz = 10, 10, 10
+    Lx, Ly, Lz = 10, 10, 0.01
     dx, dy, dz = Lx / nx, Ly / ny, Lz / nz
     solver1D = solver.Solver()
     mesh = solver1D.create_mesh(nx, ny, nz, dx, dy, dz, name = "exemplo1D")
@@ -24,7 +24,7 @@ def exemplo1D(nx, ny, nz):
     q = np.full(nvols, vq)
 
     fd = lambda x, y, z: np.where(x == 0., d1, np.where(x == Lx, d2, None))
-    fn = lambda x, y, z: np.where(y == 0., 0., np.where(y == Lx, 0., None))
+    fn = lambda x, y, z: np.zeros_like(x)
 
     a_p = lambda x, y, z : np.where(x < Lx/2, d1 - (d1 - d2) * (x / (Lx/2)) * (v1/(v1 + v2)), 
                                              (d1 + (d1 - d2) * (v2 - v1)/(v1 + v2)) - (d1 - d2) * (x / (Lx/2)) * (v2/(v1+v2)))
@@ -321,7 +321,7 @@ def testes_precisao(solutions, K_vols):
             mesh, solver = f(nx, ny, nz, pa, ga, qa, K_vols)
 
             p_a = pa(mesh.volumes.x, mesh.volumes.y, mesh.volumes.z)
-            error = np.sqrt(np.sum((p_a - solver.p)**2 * mesh.volumes.volumes) / np.sum(p_a**2 * mesh.volumes.volumes))
+            error = np.sqrt(np.sum(((p_a - solver.p)**2) * mesh.volumes.volumes) / np.sum((p_a**2) * mesh.volumes.volumes))
 
             #print(error)
             #print(np.mean(abs(solver.p - p_a)))
@@ -350,6 +350,7 @@ def testes_precisao(solutions, K_vols):
         ax[i].set_xlabel("Número de volumes")
         ax[i].set_ylabel("I²rel")
         ax[i].set_xscale("log")
+        ax[i].set_yscale("log")
         ax[i].grid()
         ax[i].legend()
         print("Total Time : \t {}".format(timedelta(seconds = time.time() - start_time)))
@@ -360,7 +361,7 @@ def testes_precisao(solutions, K_vols):
 if __name__ == '__main__':
     solver.verbose = True
     
-    #exemplo1D(20, 20, 20)
+    exemplo1D(9, 9, 1)
     #exemplo2D(300, 300, 1)
     #exemplo3D(60, 60, 60)
     #exemploAleatorio(50,50,50)
@@ -377,5 +378,5 @@ if __name__ == '__main__':
 
     #exemploAnalitico(50, 50, 50, pa1, ga1, qa1, K_vols)
     #print("Testes de Precisão")
-    testes_precisao([(pa1, ga1, qa1), (pa2, ga2, qa2)], K_vols)
+    #testes_precisao([(pa1, ga1, qa1), (pa2, ga2, qa2)], K_vols)
     

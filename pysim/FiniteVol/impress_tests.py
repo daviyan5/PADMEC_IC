@@ -8,6 +8,7 @@ import re
 import objgraph
 import gc
 import matplotlib.pyplot as plt
+from scipy.integrate import tplquad
 from mesh_gen import create_box, legacy_create_box
 from datetime import timedelta
 from memory_profiler import profile
@@ -23,7 +24,7 @@ def exemplo1D(order, Lx, Ly, Lz, meshfile = None):
 
     nvols = len(mesh.volumes)
 
-    v1, v2 = 15., 100.
+    v1, v2 = 1., 1.
     d1, d2 = 100., 30.
     vq = 0.
 
@@ -58,7 +59,7 @@ def exemplo2D(order, Lx, Ly, Lz, meshfile = None):
 
     nvols = len(mesh.volumes)
 
-    v1 = 52.
+    v1 = 1.
     d1, d2, d3 = 0., 100., 0.
     vq = 0.
 
@@ -86,9 +87,9 @@ def exemplo3D(order, Lx, Ly, Lz, meshfile = None):
 
     nvols = len(mesh.volumes)
 
-    v1 = 10.
+    v1 = 1.
     d1, d2, d3, d4 = 0., 100., 10., 40.
-    n1, n2 = 0.3, 0.7
+    n1, n2 = 0, 0
     vq = 0.
 
     K = solver.get_tensor(v1, (nvols))
@@ -128,18 +129,17 @@ def exemploAleatorio(order, Lx, Ly, Lz, meshfile = None):
     del fd, fn, mesh, meshfile
     return solverA
 
-def exemploAnalitico(order, pa, ga, qa, K_vols, Lx, Ly, Lz, meshfile = None):
+def exemploAnalitico(order, pa, ga, qa, K_vols, Lx, Ly, Lz, meshfile = None, factor = 1.5):
     solverA = solver.Solver()
 
     montar_time = time.time()
     if meshfile is None:
-        meshfile = create_box(Lx, Ly, Lz, order)
+        meshfile = create_box(Lx, Ly, Lz, order, factor = factor)
     meshA = solverA.create_mesh(meshfile)
     solverA.times["Pré-Processamento"] = time.time() - montar_time
     
     nvols = len(meshA.volumes)
     K = solver.get_tensor(K_vols, (nvols))
-
     boundary_faces = meshA.faces.boundary[:]
     normal, vL, vR = solverA._get_normal(boundary_faces)
     normal = np.abs(normal) / np.linalg.norm(normal, axis = 1).reshape((len(normal), 1))
@@ -149,7 +149,7 @@ def exemploAnalitico(order, pa, ga, qa, K_vols, Lx, Ly, Lz, meshfile = None):
 
     q = qa(xv, yv, zv, K) * solverA.volumes
     fd = lambda x, y, z: pa(x, y, z)
-    fn = lambda x, y, z: (np.einsum("ij,ij->i", normal , (-K_vols @ ga(x, y, z).T).T))
+    fn = lambda x, y, z: (np.einsum("ij,ij->i", normal , -ga(x, y, z)))
     #fd = lambda x, y, z: np.zeros_like(x)
     #fn = lambda x, y, z: np.zeros_like(x)
 
@@ -192,17 +192,18 @@ def exemploAnalitico(order, pa, ga, qa, K_vols, Lx, Ly, Lz, meshfile = None):
         ax = fig.add_subplot(223, projection='3d')
         coords = meshA.faces.center[solverA.internal_faces]
         xf, yf, zf = coords[:, 0], coords[:, 1], coords[:, 2]
-        ax.quiver(xf, yf, zf, solverA.N_norm[:, 0], solverA.N_norm[:, 1], solverA.N_norm[:, 2], length = 0.1, normalize = True)
+        ax.quiver(xf, yf, zf, solverA.N[:, 0], solverA.N[:, 1], solverA.N[:, 2], length = 0.1, normalize = False)
         ax.set_xlabel('x')
         ax.set_ylabel('y')
         ax.set_zlabel('z')
         ax.title.set_text('Vetores normais internos')
-
+        
+        
         # Plot normal vectors 
         ax = fig.add_subplot(224, projection='3d')
         coords = meshA.faces.center[boundary_faces]
         xf, yf, zf = coords[:, 0], coords[:, 1], coords[:, 2]
-        ax.quiver(xf, yf, zf, normal[:, 0], normal[:, 1], normal[:, 2], length = 0.1, normalize = True)
+        ax.quiver(xf, yf, zf, normal[:, 0], normal[:, 1], normal[:, 2], length = 0.1, normalize = False)
         ax.set_xlabel('x')
         ax.set_ylabel('y')
         ax.set_zlabel('z')
@@ -234,7 +235,7 @@ def testes_tempo(Lx, Ly, Lz):
     nvols0, nvolsMAX, incremento, ntestes, niteracoes = get_tests_args()
     tempos = np.zeros(ntestes)
     
-    
+    factor = 0.8
     solver.verbose = False
 
     f = [exemplo1D, exemplo2D, exemplo3D]
@@ -249,14 +250,14 @@ def testes_tempo(Lx, Ly, Lz):
        
 
         iter_time = time.time()
-        
+        dim = 3 if f == exemplo3D else 2 
         for i in range(niteracoes):
             mesh_create_time = time.time()
-            meshfile = create_box(Lx, Ly, Lz, nvols)
+            meshfile = create_box(Lx, Ly, Lz, nvols, factor = factor)
             mesh_args = get_args_mesh(meshfile)
             mesh_create_time = time.time() - mesh_create_time
             tempos_aux = np.empty(ntestes, dtype = object)
-
+        
         
             for j in range(ntestes):
                 solverF = f(nvols, Lx, Ly, Lz, mesh_args)
@@ -265,6 +266,9 @@ def testes_tempo(Lx, Ly, Lz):
                 t_str = timedelta(seconds = solverF.times["Total"])
                 s = "Test {} of {}: {}".format(j + 1, ntestes, t_str)
                 real_nvols = solverF.nvols
+                if len(vols) > 0 and real_nvols == vols[-1]:
+                    print("ERROR")
+                    exit(1)
                 #objgraph.show_backrefs([solverF.mesh], filename='sample-mesh.png')_
                 #objgraph.show_refs([solverF], filename='sample-graph.png')
                 del solverF
@@ -291,14 +295,14 @@ def testes_tempo(Lx, Ly, Lz):
             nvols = get_next_nvols(nvols, incremento)
         return tempos, vols
     
-    sub = {"exemplo1D": "Fluxo Unidimensional",
-           "exemplo2D": "Fluxo Bidimensional",
-           "exemplo3D": "Fluxo Tridimensional",
+    sub = {"exemplo1D": "Fluxo 1D",
+           "exemplo2D": "Fluxo 2D",
+           "exemplo3D": "Fluxo 3D",
            "exemploAleatorio": "Fluxo Aleatório"}
     c = ["black", "blue", "green", "red", "gray", "purple"]
-
+    marker = ["o", "v", "^", "<", ">", "s", "p", "*", "h", "H", "D", "d", "P", "X"]
     fig, ax = plt.subplots(2, 2, figsize = (11, 6))
-    plt.suptitle("Tempo x Número de Elementos")
+    plt.suptitle("Tempo x Número de Volumes")
     for i in range(len(f)):
         start_time = time.time()
         tempos, vols = run_iterations(f[i])
@@ -307,30 +311,30 @@ def testes_tempo(Lx, Ly, Lz):
 
         
         #ax[0][0].plot(vols, tempos[:, 3, 0], linestyle = "dotted", color = c[i])
-        ax[0][0].plot(vols, tempos[:, 3, 1], linestyle = "solid", color = c[i], label = sub[f[i].__name__])
+        ax[0][0].plot(vols, tempos[:, 3, 1], linestyle = "solid", color = c[i], label = sub[f[i].__name__], marker = marker[i])#o")
         #ax[0][0].plot(vols, tempos[:, 3, 2], linestyle = "dashed", color = c[i])
-        ax[0][0].set_xlabel("Número de elementos")
+        ax[0][0].set_xlabel("Número de Volumes")
         ax[0][0].set_ylabel("Tempo (s)")
         ax[0][0].title.set_text("Total")
 
         #ax[0][1].plot(vols, tempos[:, 0, 0], linestyle = "dotted", color = c[i])
-        ax[0][1].plot(vols, tempos[:, 0, 1], linestyle = "solid", color = c[i], label = sub[f[i].__name__])
+        ax[0][1].plot(vols, tempos[:, 0, 1], linestyle = "solid", color = c[i], label = sub[f[i].__name__], marker = marker[i])#v")
         #ax[0][1].plot(vols, tempos[:, 0, 2], linestyle = "dashed", color = c[i])
-        ax[0][1].set_xlabel("Número de elementos")
+        ax[0][1].set_xlabel("Número de Volumes")
         ax[0][1].set_ylabel("Tempo (s)")
         ax[0][1].title.set_text("Pré-Processamento")
 
         #ax[1][0].plot(vols, tempos[:, 1, 0], linestyle = "dotted", color = c[i])
-        ax[1][0].plot(vols, tempos[:, 1, 1], linestyle = "solid", color = c[i], label = sub[f[i].__name__])
+        ax[1][0].plot(vols, tempos[:, 1, 1], linestyle = "solid", color = c[i], label = sub[f[i].__name__], marker = marker[i])#s")
         #ax[1][0].plot(vols, tempos[:, 1, 2], linestyle = "dashed", color = c[i])
-        ax[1][0].set_xlabel("Número de elementos")
+        ax[1][0].set_xlabel("Número de Volumes")
         ax[1][0].set_ylabel("Tempo (s)")
         ax[1][0].title.set_text("Montar Sistema TPFA")
 
         #ax[1][1].plot(vols, tempos[:, 2, 0], linestyle = "dotted", color = c[i])
-        ax[1][1].plot(vols, tempos[:, 2, 1], linestyle = "solid", color = c[i], label = sub[f[i].__name__])
+        ax[1][1].plot(vols, tempos[:, 2, 1], linestyle = "solid", color = c[i], label = sub[f[i].__name__], marker = marker[i])#p")
         #ax[1][1].plot(vols, tempos[:, 2, 2], linestyle = "dashed", color = c[i])
-        ax[1][1].set_xlabel("Número de elementos")
+        ax[1][1].set_xlabel("Número de Volumes")
         ax[1][1].set_ylabel("Tempo (s)")
         ax[1][1].title.set_text("Resolver Sistema")
 
@@ -353,7 +357,7 @@ def testes_precisao(solutions, K_vols, Lx, Ly, Lz, names):
 
     solver.verbose = False
 
-    def run_iterations(f, pa, ga, qa, K_vols):
+    def run_iterations(f, pa, ga, qa, K_vols, ia = None):
         
         nvols = nvols0
         vols = []
@@ -367,11 +371,44 @@ def testes_precisao(solutions, K_vols, Lx, Ly, Lz, names):
             total_time = time.time()
             solver = f(nvols, pa, ga, qa, K_vols, Lx, Ly, Lz)
             solver.times["Total"] = time.time() - total_time
-
+ 
+            # We need to integrate p_a over the volume
+            # How:
+            # 1. Find dx, dy, dz for each volume
+            # 2. Get the coordinates of the point P of each volume, for (xc, yc, zc) in each volume:
+            #    P = (xc - dx/2, yc - dy/2, zc - dz/2)
+            # 3. Integrate p_a(P) * dx * dy * dz from P[0] to P[0] + dx, P[1] to P[1] + dy, P[2] to P[2] + dz
             coords = solver.mesh.volumes.center[:]
             xv, yv, zv = coords[:, 0], coords[:, 1], coords[:, 2]
-            p_a = solver.an_sol(xv, yv, zv)
-            error = np.sum((p_a - solver.p)**2 * solver.volumes) / np.sum((p_a**2) * solver.volumes)
+            
+            faces_coords = solver.mesh.faces.center[solver.faces_by_volume.flatten()].reshape(solver.faces_by_volume.shape + (3,))
+            new_coords = coords[:, np.newaxis, :].repeat(solver.faces_by_volume.shape[1], axis = 1)
+
+            distances = np.abs(faces_coords - new_coords).sum(axis = 1)
+            P = coords - distances / 2 
+            dx, dy, dz = distances[:, 0], distances[:, 1], distances[:, 2]
+
+            
+            # lamban_sol = lambda z, y, x: solver.an_sol(x, y, z)
+
+            # for i in range(P.shape[0]):
+            #     res = tplquad(lamban_sol, P[i][0], P[i][0] + dx[i], P[i][1], P[i][1] + dy[i], P[i][2], P[i][2] + dz[i])[0]
+            #     res_list.append(res)
+            p_a = solver.an_sol(xv, yv, zv) 
+            p_n = solver.p 
+
+            if ia is not None:
+                res_list = ia(P[:, 0], P[:, 0] + dx, P[:, 1], P[:, 1] + dy, P[:, 2], P[:, 2] + dz)
+                p_a  = np.array(res_list) / solver.volumes
+                # print(p_a)
+                # print("PN")
+                # print(p_n)
+                # input()
+           
+            
+            
+            error = (np.sum(((p_a - p_n) ** 2) *  solver.volumes) / np.sum((p_a ** 2) * solver.volumes))
+            
             print("Error:", np.sqrt(error))
             #print(solver.times)
             #print(np.mean(abs(solver.p - p_a)))
@@ -404,21 +441,27 @@ def testes_precisao(solutions, K_vols, Lx, Ly, Lz, names):
     c = ["black", "blue", "green", "red", "grey"]
     for i, solution in enumerate(solutions):
         start_time = time.time()
-        precisao, erro_medio, vols = run_iterations(exemploAnalitico, solution[0], solution[1], solution[2], K_vols)
+        precisao, erro_medio, vols = run_iterations(exemploAnalitico, solution[0], solution[1], solution[2], K_vols, ia = solution[3] if len(solution) > 3 else None)
         a, b = i // m, i % m
         vols = np.array(vols)
 
         ax[a][b].set_xscale('log')
         ax[a][b].set_yscale('log')
-        ax[a][b].plot(vols, erro_medio, label = "I²rel", color = c[i % len(c)])
+        ratio = ax[a][b].get_data_ratio()
+        print("ratio: ", ratio)
+        tgalpha = ratio * (np.log10(erro_medio[0]) - np.log10(erro_medio[-1])) / (np.log10(vols[-1]) - np.log10(vols[0]))
+        print("tgalpha: ", tgalpha)
+        ax[a][b].plot(vols, erro_medio, label = "I²rel", color = c[i % len(c)], marker = "p")
 
         #ratio = ax[a][b].get_data_ratio()
         #scale_vols = erro_medio[0] * 10**(-2 * ratio * (np.log10(vols) - np.log10(vols[0]))) 
         scale_vols = (erro_medio[0] * (vols[0] ** 2)) / vols ** 2
-    
-        ax[a][b].plot(vols, scale_vols, label = "O(n²)", color = 'purple')
+        if i != 0:
+            ax[a][b].plot(vols, scale_vols, label = "O(n²)", color = 'purple', linestyle = "--")
+        else:
+            ax[a][b].set_ylim(1e-18, 1e-14)
         ax[a][b].set_title(names[i])
-        ax[a][b].set_xlabel("Número de Elementos")
+        ax[a][b].set_xlabel("Número de Volumes")
         ax[a][b].set_ylabel("I²rel")
         ax[a][b].grid()
         ax[a][b].legend()
@@ -491,6 +534,10 @@ def testes_memoria(Lx, Ly, Lz):
         str_i = "0" * (len(str(niteracoes)) - len(str(i + 1))) + str(i + 1)
         str_nvols = "0" * (len(str(nvolsMAX)) - len(str(real_nvols))) + str(real_nvols)
 
+        if len(vols) > 0 and real_nvols == vols[-1]:
+            print("ERROR")
+            exit(1)
+        
         print("Iteration : {}/{} \t Vols: {} \t Total Time : {}".format(str_i, niteracoes, str_nvols, t_str))
         vols.append(real_nvols)
         memory.append(np.mean(memory_aux))
@@ -498,22 +545,21 @@ def testes_memoria(Lx, Ly, Lz):
     plt.grid()
     plt.xlabel("Número de Volumes")
     plt.ylabel("Memória Alocada pela Simulação (MBs)")
-    plt.plot(vols, np.array(memory) / 1e6, label = "Memória por Número de Elementos")
-    plt.xscale('log')
+    plt.plot(vols, np.array(memory) / 1e6, label = "Memória por Número de Volumes", marker = "p", color = "blue")
     plt.tight_layout()
     plt.legend()
     plt.savefig("./tmp/testes_memoria.png")
     plt.clf()
 
-def get_args_mesh(meshfile):
+def get_args_mesh(meshfile, dim = 3):
     aux_solver = solver.Solver()
-    aux_mesh = aux_solver.create_mesh(meshfile)
+    aux_mesh = aux_solver.create_mesh(meshfile, dim = dim)
     return np.array([meshfile, aux_solver.areas, aux_solver.volumes], dtype=object)
 
 def get_tests_args():
     nvols0 = 4 ** 3
     nvolsMAX = 9 ** 3
-    incremento = 3
+    incremento = 1.1
     ntestes = 10
     niteracoes = int((nvolsMAX ** (1/3) - nvols0 ** (1/3) + 1)) 
 
@@ -524,8 +570,9 @@ def get_next_nvols(nvols, incremento):
 
 if __name__ == '__main__':
     solver.verbose = True
-    Lx, Ly, Lz = 1., 1., 1.
-    order = 10
+    Lx, Ly, Lz = 600., 0.2, 0.2
+    order = 1
+    factor = 1
     #exemplo1D(order, Lx, Ly, Lz)
     #exemplo2D(order, Lx, Ly, Lz)
     #exemplo3D(order, Lx, Ly, Lz)
@@ -550,23 +597,27 @@ if __name__ == '__main__':
     pa3 = lambda x, y, z:       x**3 + y**3 + z**3 # x³ + y³ + z³
     ga3 = lambda x, y, z:       np.array([3*(x**2), 3*(y**2), 3*(z**2)]).T
     qa3 = lambda x, y, z, K:    -6 * (K[:,0,0] * x + K[:,1,1] * y + K[:,2,2] * z)
-
+    ia3 = lambda x0, x1, y0, y1, z0, z1: 1/4 * ((x1**4 - x0**4) * (y1 - y0) * (z1 - z0) + 
+                                                (y1**4 - y0**4) * (x1 - x0) * (z1 - z0) +
+                                                (z1**4 - z0**4) * (x1 - x0) * (y1 - y0))
     pa4 = lambda x, y, z:       (x + 1) * np.log(1 + x) + 1/(y + 1) + z**2 # xln(x) + 1/(y+1) + z²
     ga4 = lambda x, y, z:       np.array([np.log(1 + x) + 1,-1/(y+1)**2, 2*z]).T
-    qa4 = lambda x, y, z, K:    -(K[:,0,0] * (1/(x+1)) + K[:,1,1] * (2/(y+1)**3) + K[:,2,2] * 2)
+    qa4 = lambda x, y, z, K:    -(K[:,0,0] * (1/(x+1)) + K[:,1,1] * (2/((y+1)**3)) + K[:,2,2] * 2)
 
     pa5 = lambda x, y, z:       np.exp(x)
     ga5 = lambda x, y, z:       np.array([np.exp(x), 0, 0]).T
     qa5 = lambda x, y, z, K:    -(K[:,0,0] * np.exp(x) + K[:,1,1] * 0 + K[:,2,2] * 0)
     
-    exemploAnalitico(order, pa5, ga4, qa4, K, Lx, Ly, Lz)
     
+    exemploAnalitico(order, pa3, ga3, qa3, K, Lx, Ly, Lz, factor = 1)
+    exit()
     #testes_memoria(Lx, Ly, Lz)
     #testes_tempo(Lx, Ly, Lz)
     
     solutions = [(pa1, ga1, qa1), (pa2, ga2, qa2), (pa3, ga3, qa3), (pa4, ga4, qa4)]
+    Lx, Ly, Lz = 1., 1., 1.
     #solutions = [(pa5, ga5, qa5)]
-    #testes_precisao(solutions, K, Lx, Ly, Lz, names)
+    testes_precisao(solutions, K, Lx, Ly, Lz, names)
     exit()
     meshfiles = ["./mesh/20.h5m", "./mesh/30.h5m"] #,"./mesh/40.h5m", "./mesh/50.h5m", "./mesh/60.h5m", "./mesh/80.h5m"]
     sz = {meshfiles[0]: (20, 20, 20),
