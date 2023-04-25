@@ -1,0 +1,9 @@
+
+vscode
+*.npy
+*.vtk
+*.pdf
+tmp/*.png
+FiniteVol/__pycache__
+Mesh/__pycache__
+Utils/__pycache__
