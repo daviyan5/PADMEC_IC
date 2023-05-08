@@ -54,11 +54,7 @@ def main():
     MeshGen = MeshGenerator()
     Lx, Ly, Lz = 1, 1, 1
     # Create 20 boxes
-    for i in range(20):
-        order = 2 ** (i + 1) 
-        filename = "box{}.msh".format(i)
-        MeshGen.create_box([Lx, Ly, Lz], order, filename = filename, visualize=False)
-        print("Created mesh with order {} in {}".format(order, filename))
+    MeshGen.create_box((Lx, Ly, Lz), 1, "teste.msh", False)
 
 if __name__ == "__main__":
     main()

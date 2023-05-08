@@ -656,7 +656,13 @@ class TPFAsolver:
         
         factor = (K * self.faces_areas[self.d_faces]) / (hb)
         Ad_V = np.zeros(shape = (self.nvols))
-        np.add.at(Ad_V, d_volumes, factor)
+        self.At_TPFA[d_volumes] = 0.
+        self.At_TPFA[d_volumes, d_volumes] = 1.
+        d_volumes = np.unique(d_volumes)
+        xv, yv, zv = self.volumes_center[d_volumes, 0], self.volumes_center[d_volumes, 1], self.volumes_center[d_volumes, 2]
+        d_volumes = np.unique(d_volumes)
+        self.bt_TPFA[d_volumes] = bc(xv, yv, zv, d_faces, self.mesh)
+        #np.add.at(Ad_V, d_volumes, factor)
         
         row_index = np.arange(self.nvols)
         col_index = np.arange(self.nvols)
@@ -665,7 +671,7 @@ class TPFAsolver:
                                    shape=(self.nvols, self.nvols))
         
         self.bd_TPFA = np.zeros(shape = (self.nvols))
-        np.add.at(self.bd_TPFA, d_volumes, d_values * factor)
+        #np.add.at(self.bd_TPFA, d_volumes, d_values * factor)
     
     def __set_neumann_boundary_conditions(self, bc : callable) -> None:
         """
@@ -709,7 +715,7 @@ class TPFAsolver:
         if self.bn_TPFA is not None:
             b += self.bn_TPFA
         A.eliminate_zeros()
-        self.p_TPFA = spsolve(A, b)
+        self.p_TPFA = spsolve(A, b) 
         if self.check:
             assert np.allclose(A.dot(self.p_TPFA), b), "Solução do sistema TPFA não satisfaz a equação"
         

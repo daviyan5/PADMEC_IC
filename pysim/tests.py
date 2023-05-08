@@ -167,7 +167,8 @@ def run_accurracy_tests(analytical_solutions : list, box_dimensions : tuple,  me
 
 def main():
     # meshlist = helpers.create_meshes((1, 1, 1), num = 20, suffix = "acc")
-    meshlist = ["mesh/box_{}acc.msh".format(i) for i in range(5)]
+    meshlist = ["mesh/box_{}acc.msh".format(i) for i in range(4)]
+    #meshlist = ["mesh/cube_hex.msh"]
     #print(get_analytical_keys())
 
     solution1 = {
@@ -179,9 +180,9 @@ def main():
     }
     solution2 = {
         "name"              : "x^2 + y^2 + z^2",
-        "p"                 : lambda x, y, z:       x**3 + y**3 + z**3,
-        "-div(K grad(p))"   : lambda x, y, z, K:    -6 * (K[:,0,0] * x + K[:,1,1] * y + K[:,2,2] * z),
-        "dirichlet"         : lambda x, y, z:       x**3 + y**3 + z**3,
+        "p"                 : lambda x, y, z:       x**4 + y**4 + z**4,
+        "-div(K grad(p))"   : lambda x, y, z, K:    -12 * (x**2 + y**2 + z**2),
+        "dirichlet"         : lambda x, y, z:       x**4 + y**4 + z**4,
         "neumann"           : lambda x, y, z:       np.zeros_like(x)
     }
     solution3 = {
