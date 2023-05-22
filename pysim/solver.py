@@ -1,5 +1,6 @@
 import numpy as np
 import scipy as sp
+
 import os
 import sys
 import time
@@ -14,9 +15,11 @@ sys.path.append('../')
 from preprocessor.meshHandle.finescaleMesh import FineScaleMesh                     # type: ignore 
 from scipy.sparse import csr_matrix
 from scipy.sparse.linalg import spsolve
+from pypardiso import spsolve as pypardiso_spsolve
+from numba import njit
 
 class TPFAsolver:
-    def __init__(self, verbose = True, check : bool = True, name: str = "MESH") -> None:
+    def __init__(self, verbose = True, check : bool = True, name: str = "MESH", fast_solver : bool = False) -> None:
 
         # ==== ERROR HANDLING =======================================================================================#
         if not isinstance(verbose, bool) or not isinstance(check, bool):
@@ -27,6 +30,7 @@ class TPFAsolver:
         
         self.verbose        = verbose                                               # Flag para verbose mode    (bool)
         self.check          = check                                                 # Flag para check mode      (bool)
+        self.fast_solver    = fast_solver                                           # Flag para fast solver     (bool)
         np.set_printoptions(precision = 4)
         global counter
         if name == "MESH":
@@ -52,7 +56,7 @@ class TPFAsolver:
         self.vols_pairs             = None                                          # Pares de volumes      
                                                                                     # array de dimensões 
                                                                                     # {nfaces, 2}               (np.ndarray)
-        self.permeability         = None                                          # Permeabilidades           (np.ndarray)
+        self.permeability           = None                                          # Permeabilidades           (np.ndarray)
         # IMPRESS - Handles carregados do arquivo de malha -------------------------------------------------------#
         self.internal_faces         = None                                          # Índice das faces  
                                                                                     # internas                  (np.ndarray)
@@ -63,6 +67,7 @@ class TPFAsolver:
         self.faces_center           = None                                          # Centro das faces          (np.ndarray)
         self.volumes_center         = None                                          # Centro dos volumes        (np.ndarray)        
         self.faces_connectivities   = None                                          # Conectividade das faces   (np.ndarray)  
+        self.volumes_connectivities = None                                          # Conectividade dos volumes (np.ndarray)
         self.nodes_coords           = None                                          # Coordenadas dos nós       (np.ndarray)
 
         # Utilidades para o TPFA ----------------------------------------------------------------------------------#
@@ -94,6 +99,9 @@ class TPFAsolver:
 
         # Condicoes de contorno -----------------------------------------------------------------------------------#
         self.faces_with_bc          = None                                          # Índice das faces com
+                                                                                    # condições de contorno     (np.ndarray)
+        
+        self.volumes_with_bc        = None                                          # Índice dos volumes com
                                                                                     # condições de contorno     (np.ndarray)
 
         self.Ad_TPFA                = None                                          # Contribuição da CC 
@@ -248,6 +256,7 @@ class TPFAsolver:
         x, y, z                 = self.volumes_center[:, 0], self.volumes_center[:, 1], self.volumes_center[:, 2]
         self.numerical_p        = self.p_TPFA
         self.analytical_p       = args["analytical"](x, y, z) if args["analytical"] else None
+        #self.analytical_p       = self.__do_integral_over_volumes(args["analytical"], self.mesh.volumes.all[:])
         self.irel               = np.sqrt((((self.analytical_p - self.p_TPFA) ** 2  * self.volumes) / 
                                             ((self.analytical_p ** 2) * self.volumes))) if args["analytical"] else None
         
@@ -322,6 +331,7 @@ class TPFAsolver:
         self.faces_center           = self.mesh.faces.center[:]
         self.volumes_center         = self.mesh.volumes.center[:]
         self.faces_connectivities   = self.mesh.faces.connectivities[:]
+        self.volumes_connectivities = self.mesh.volumes.connectivities[:]
         self.nodes_coords           = self.mesh.nodes.coords[:]
 
         return mesh_params
@@ -391,6 +401,7 @@ class TPFAsolver:
         return vtk_filename
     
     # ----------- Private Methods ----------------#
+    
     def __verbose(self, step_name):
         """
         Imprime o passo atual da simulação
@@ -482,7 +493,7 @@ class TPFAsolver:
         """
         Atualiza as variáveis da malha
         """
-        self.mesh.permeability[:]   = self.permeability.reshape((self.nvols, 9))
+        self.mesh.permeability[:]   = self.permeability.reshape((self.nvols, 9)).mean(axis=1)
         self.mesh.numerical_p[:]    = self.p_TPFA
         if self.analytical_p is not None:
             self.mesh.analytical_p[:]   = self.analytical_p
@@ -566,7 +577,7 @@ class TPFAsolver:
         """
         
         N, vL, vR = self.__get_normal(self.internal_faces, self.vols_pairs)
-        
+        self.in_distances = np.linalg.norm(np.abs(vL) + np.abs(vR))                 # Distância entre os centros dos volume
         self.N = np.abs(N) / np.linalg.norm(N, axis = 1)[:, None]                   # Normaliza os vetores normais
     
         self.h_L = np.abs(np.einsum("ij,ij->i", self.N, vL))                        # Distância normal entre o centro da face e o centro do volume da esquerda
@@ -605,6 +616,7 @@ class TPFAsolver:
         
         
         xv, yv, zv = self.volumes_center[:, 0], self.volumes_center[:, 1], self.volumes_center[:, 2]
+        
         self.bt_TPFA = q(xv, yv, zv, self.permeability) * self.volumes              # Calcula o vetor b
 
         self.At_TPFA = self.At_TPFA.tolil()                                         # Converte para lil para facilitar a montagem da matriz A
@@ -623,55 +635,86 @@ class TPFAsolver:
         if not callable(bc):
             raise TypeError("\t bc must be a callable function!")
         # ===========================================================================================================#
-        coords = self.faces_center[self.boundary_faces]
-        x, y, z = coords[:, 0], coords[:, 1], coords[:, 2]
+
+        def do_faces():
+            coords = self.faces_center[self.boundary_faces]
+            x, y, z = coords[:, 0], coords[:, 1], coords[:, 2]
 
 
-        d_values    = (bc(x, y, z, self.boundary_faces, self.mesh))                 # Calcula os valores da CC de Dirichlet
-        d_faces     = self.boundary_faces[d_values != None]                         # Pega as faces que possuem CC de Dirichlet     
-        d_values    = d_values[d_values != None].astype('float')                    # Pega os valores da CC de Dirichlet nas faces que às possuem
-        
-        assert len(d_faces) > 1, "Não há condições de contorno de Dirichlet"
-        mask        = np.isin(d_faces, self.faces_with_bc)                          # Verifica se as faces com CC de Dirichlet estão no conjunto de faces com CC de Dirichlet
-        d_faces     = d_faces[mask == False]                                        # Remove as faces que estão no conjunto de faces com CC
-        d_values    = d_values[mask == False]          
-        
-        self.faces_with_bc = np.setdiff1d(self.faces_with_bc, d_faces)
+            d_values    = (bc(x, y, z, self.boundary_faces, self.mesh))                 # Calcula os valores da CC de Dirichlet
+            d_faces     = self.boundary_faces[d_values != None]                         # Pega as faces que possuem CC de Dirichlet     
+            d_values    = d_values[d_values != None].astype('float')                    # Pega os valores da CC de Dirichlet nas faces que às possuem
+            
+            assert len(d_faces) > 1, "Não há condições de contorno de Dirichlet"
+            mask        = np.isin(d_faces, self.faces_with_bc)                          # Verifica se as faces com CC de Dirichlet estão no conjunto de faces com CC de Dirichlet
+            d_faces     = d_faces[mask == False]                                        # Remove as faces que estão no conjunto de faces com CC
+            d_values    = d_values[mask == False]          
+            
+            self.faces_with_bc = np.setdiff1d(self.faces_with_bc, d_faces)
 
-        d_volumes   = self.mesh.faces.bridge_adjacencies(d_faces, 2, 3).astype('int').flatten()
+            d_volumes = self.mesh.faces.bridge_adjacencies(d_faces, 2, 3).astype('int').flatten()
 
-        self.d_faces, self.d_values, self.d_volumes = d_faces, d_values, d_volumes
+            self.d_faces, self.d_values, self.d_volumes = d_faces, d_values, d_volumes
+            Nb, vL  = self.__get_normal(d_faces, d_volumes)[:2]                      # Calcula os vetores normais e os vetores que vão do centro da face para o centro do volume
+        
+            "TODO: Os vetores normais devem estar alinhados com vL? Ou devem todos ter um mesmo sentido?"
 
-        Nb, vL  = self.__get_normal(d_faces, d_volumes)[:2]                         # Calcula os vetores normais e os vetores que vão do centro da face para o centro do volume
-        
-        "TODO: Os vetores normais devem estar alinhados com vL? Ou devem todos ter um mesmo sentido?"
+            Nb = np.abs(Nb) / np.linalg.norm(Nb, axis = 1)[:, None]                  # Normaliza os vetores normais
+            
+            hb = np.abs(np.einsum("ij,ij->i", Nb, vL))
 
-        Nb = np.abs(Nb) / np.linalg.norm(Nb, axis = 1)[:, None]                     # Normaliza os vetores normais
-        
-        hb = np.abs(np.einsum("ij,ij->i", Nb, vL))
+            K = self.permeability[d_volumes].reshape((len(d_volumes), 3, 3))
+            K = np.einsum("ij,ikj->ik", Nb, K)
+            K = np.einsum("ij,ij->i", Nb, K) 
 
-        K = self.permeability[d_volumes].reshape((len(d_volumes), 3, 3))
-        K = np.einsum("ij,ikj->ik", Nb, K)
-        K = np.einsum("ij,ij->i", Nb, K) 
+            factor = (K * self.faces_areas[self.d_faces]) / (hb)
+            Ad_V = np.zeros(shape = (self.nvols))
+            np.add.at(Ad_V, d_volumes, factor)
+            row_index = np.arange(self.nvols)
+            col_index = np.arange(self.nvols)
         
-        factor = (K * self.faces_areas[self.d_faces]) / (hb)
-        Ad_V = np.zeros(shape = (self.nvols))
-        self.At_TPFA[d_volumes] = 0.
-        self.At_TPFA[d_volumes, d_volumes] = 1.
-        d_volumes = np.unique(d_volumes)
-        xv, yv, zv = self.volumes_center[d_volumes, 0], self.volumes_center[d_volumes, 1], self.volumes_center[d_volumes, 2]
-        d_volumes = np.unique(d_volumes)
-        self.bt_TPFA[d_volumes] = bc(xv, yv, zv, d_faces, self.mesh)
-        #np.add.at(Ad_V, d_volumes, factor)
-        
-        row_index = np.arange(self.nvols)
-        col_index = np.arange(self.nvols)
-        
-        self.Ad_TPFA = csr_matrix((Ad_V, (row_index, col_index)), 
-                                   shape=(self.nvols, self.nvols))
-        
-        self.bd_TPFA = np.zeros(shape = (self.nvols))
-        #np.add.at(self.bd_TPFA, d_volumes, d_values * factor)
+            self.Ad_TPFA = csr_matrix((Ad_V, (row_index, col_index)), 
+                                      shape=(self.nvols, self.nvols))
+            self.bd_TPFA = np.zeros(shape = (self.nvols))
+
+            np.add.at(self.bd_TPFA, d_volumes, d_values * factor)
+
+        def do_volumes():
+            
+            d_faces   = self.boundary_faces
+            d_volumes = self.mesh.faces.bridge_adjacencies(d_faces, 2, 3).astype('int').flatten()
+            d_volumes = np.unique(d_volumes)
+
+            xv, yv, zv  = self.volumes_center[d_volumes, 0], self.volumes_center[d_volumes, 1], self.volumes_center[d_volumes, 2]
+            d_values    = bc(xv, yv, zv, d_volumes, self.mesh)
+            idx         = np.logical_not(np.isnan(d_values))
+            d_volumes   = d_volumes[idx]
+            d_values    = d_values[idx].astype('float')
+            
+            assert len(d_volumes) > 1, "Não há condições de contorno de Dirichlet"
+            mask        = np.isin(d_volumes, self.volumes_with_bc)
+            d_volumes   = d_volumes[mask == False]
+            d_values    = d_values[mask == False]
+
+            self.volumes_with_bc = np.setdiff1d(self.volumes_with_bc, d_volumes)
+            self.bt_TPFA[d_volumes] = d_values
+            
+            
+            for d_volume in d_volumes:
+                self.At_TPFA.data[self.At_TPFA.indptr[d_volume] : self.At_TPFA.indptr[d_volume + 1]] = 0.
+            self.At_TPFA.eliminate_zeros()
+            self.At_TPFA = self.At_TPFA.tolil()
+            # self.At_TPFA[d_volumes] = 0.                                          # Equivalent but slower
+            self.At_TPFA[d_volumes, d_volumes] = 1.
+            self.At_TPFA = self.At_TPFA.tocsr()
+
+            self.d_faces, self.d_values, self.d_volumes = d_faces, d_values, d_volumes
+            self.Ad_TPFA = None
+            self.bd_TPFA = None
+
+        do_volumes()
+        #do_faces()
+          
     
     def __set_neumann_boundary_conditions(self, bc : callable) -> None:
         """
@@ -683,25 +726,50 @@ class TPFAsolver:
         if not callable(bc):
             raise TypeError("\t bc must be a callable function!")
         # ===========================================================================================================#
-        coords = self.mesh.faces.center[self.boundary_faces]
-        x, y, z = coords[:, 0], coords[:, 1], coords[:, 2]
-        
-        n_values = bc(x, y, z, self.boundary_faces, self.mesh)
-        n_faces = self.boundary_faces[n_values != None]
-        n_values = n_values[n_values != None]
-        
-        mask = np.isin(n_faces, self.faces_with_bc)
-        n_faces = n_faces[mask == False]
-        n_values = n_values[mask == False]
-        self.faces_with_bc = np.setdiff1d(self.faces_with_bc, n_faces)
+        def do_faces():
+            coords = self.mesh.faces.center[self.boundary_faces]
+            x, y, z = coords[:, 0], coords[:, 1], coords[:, 2]
+            
+            n_values    = bc(x, y, z, self.boundary_faces, self.mesh)
+            idx         = np.logical_not(np.isnan(n_values)) 
+            n_faces     = self.boundary_faces[idx]
+            n_values    = n_values[idx]
+            
+            mask = np.isin(n_faces, self.faces_with_bc)
+            n_faces = n_faces[mask == False]
+            n_values = n_values[mask == False]
+            self.faces_with_bc = np.setdiff1d(self.faces_with_bc, n_faces)
 
-        self.n_faces, self.n_values = n_faces, n_values
-        if len(n_faces) > 1:
+            self.n_faces, self.n_values = n_faces, n_values
+            if len(n_faces) > 1:
+                n_volumes = self.mesh.faces.bridge_adjacencies(n_faces, 2, 3).astype('int').flatten()
+                self.n_volumes = n_volumes
+
+                self.bn_TPFA = np.zeros(shape = (self.nvols))
+                np.add.at(self.bn_TPFA, n_volumes, -n_values * self.volumes[n_volumes])
+
+        def do_volumes():
+            n_faces   = self.boundary_faces
             n_volumes = self.mesh.faces.bridge_adjacencies(n_faces, 2, 3).astype('int').flatten()
-            self.n_volumes = n_volumes
+            n_volumes = np.unique(n_volumes)
 
-            self.bn_TPFA = np.zeros(shape = (self.nvols))
-            np.add.at(self.bn_TPFA, n_volumes, -n_values * self.volumes[n_volumes])
+            xv, yv, zv  = self.volumes_center[n_volumes, 0], self.volumes_center[n_volumes, 1], self.volumes_center[n_volumes, 2]
+            n_values    = bc(xv, yv, zv, n_faces, self.mesh)
+            n_volumes   = n_volumes[n_values != None]
+            n_values    = n_values[n_values != None].astype('float')
+
+            mask        = np.isin(n_volumes, self.volumes_with_bc)
+            n_volumes   = n_volumes[mask == False]
+            n_values    = n_values[mask == False]
+
+            self.volumes_with_bc = np.setdiff1d(self.volumes_with_bc, n_volumes)
+            self.bt_TPFA[n_volumes] += n_values
+
+            self.n_faces, self.n_values = n_faces, n_values
+            self.bn_TPFA = None
+
+        do_volumes()
+        #do_faces()
 
     def __solve_TPFA_system(self) -> None:
         """
@@ -715,11 +783,60 @@ class TPFAsolver:
         if self.bn_TPFA is not None:
             b += self.bn_TPFA
         A.eliminate_zeros()
-        self.p_TPFA = spsolve(A, b) 
+        if self.fast_solver:
+            self.p_TPFA = pypardiso_spsolve(A, b)
+        else:
+            self.p_TPFA = spsolve(A, b) 
         if self.check:
             assert np.allclose(A.dot(self.p_TPFA), b), "Solução do sistema TPFA não satisfaz a equação"
+            assert self.__check_conservative(), "Solução do sistema TPFA não conserva o fluxo" 
+        #self.p_TPFA /= self.volumes
+        
+    def __check_conservative(self) -> bool:
+        """
+        Verifica se a solução do sistema TPFA satisfaz a conservação do fluxo
+        """
+        return True
+    
+    def __do_integral_over_volumes(self, f: callable, volumes_index: np.array) -> np.array:
+        """
+        Calcula a integral de f sobre os volumes especificados
+        """
+        # ==== ERROR HANDLING =======================================================================================#
+        if not callable(f):
+            raise TypeError("\t f must be a callable function!")
+        # ===========================================================================================================#
+        nodes   = self.volumes_connectivities[volumes_index]
+        coords  = self.nodes_coords[nodes.flatten()].reshape(nodes.shape + (3,))
+        x, y, z = coords[:, :, 0], coords[:, :, 1], coords[:, :, 2]
+        liminfx, limsupx = np.min(x, axis=1), np.max(x, axis=1)
+        liminfy, limsupy = np.min(y, axis=1), np.max(y, axis=1)
+        liminfz, limsupz = np.min(z, axis=1), np.max(z, axis=1)
+        limsx = np.array([liminfx, limsupx]).T
+        limsy = np.array([liminfy, limsupy]).T
+        limsz = np.array([liminfz, limsupz]).T
+        lims  = np.hstack((limsx, limsy, limsz)).reshape(len(volumes_index), 3, 2)
+        return self.__integrate(f, lims)
+    
+    def __integrate(self, f: callable, lims: np.array) -> np.array:
+        """
+        Calcula a integral tripla de f(x,y,z) sobre os limites especificados
+        """
+        from scipy.integrate import tplquad
+        def integrand(z, y, x):
+            return f(x, y, z)
         
         
+        def integrate_over_volume(lims):
+            result = np.empty(len(lims))
+            for i in range(len(lims)):
+                result[i] = tplquad(integrand, lims[i, 0, 0], lims[i, 0, 1],
+                                    lambda x: lims[i, 1, 0], lambda x: lims[i, 1, 1],
+                                    lambda x, y: lims[i, 2, 0], lambda x, y: lims[i, 2, 1])[0]
+            return result
+
+        return integrate_over_volume(lims)
+    
 def main():
     directory = "mesh"
     # Open the mesh directory and run the solver for each mesh file

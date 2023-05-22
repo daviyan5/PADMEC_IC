@@ -30,7 +30,7 @@
 
 permeability:
   type: volumes
-  data size: 9
+  data size: 1
   data type: float
   sparse: False
   level: 0
