@@ -24,7 +24,7 @@ from matplotlib.animation import FuncAnimation
 #          cty * (np.roll(u[t], -1, axis=1) + np.roll(u[t], 1, axis=1))
 
 def solve_2d_mt_get_next(ctx, cty, u0, u00):
-    return (u0 * (2 - 2*ctx - 2*cty) - u00 + ctx * (np.roll(u0, -1, axis=0) + np.roll(u0, 1, axis=0)) +
+    return (u0 * (2 - 2*ctx**2 - 2*cty**2) - u00 + ctx * (np.roll(u0, -1, axis=0) + np.roll(u0, 1, axis=0)) +
             cty * (np.roll(u0, -1, axis=1) + np.roll(u0, 1, axis=1)))
 
 def reset_boundary_conditions(u):
@@ -93,11 +93,11 @@ def main():
     
 
     # Equation parameters   
-    c = 1
+    c = 500
 
     # Initial conditions
     u = np.empty((nt, nx, ny))
-    u0 = image_to_numpy("./Misc/silk.jpg")
+    u0 = image_to_numpy("./silk.jpg")
     # Rotate 180 degrees
     u0 = np.rot90(u0, 2)
     u[0] = u0

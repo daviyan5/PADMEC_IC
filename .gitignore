@@ -1,3 +1,8 @@
 Docs
 Relatorio
 pysim/Misc/silk.jpg
+pysim_old/Misc/flux.mp4
+pysim_old
+jlsim/mesh/
+jlsim/__pycache__
+.gitignore

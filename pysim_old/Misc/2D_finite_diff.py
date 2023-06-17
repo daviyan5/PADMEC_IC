@@ -108,7 +108,7 @@ def main():
     u = np.empty((nt, nx, ny))
     u0 = np.zeros((nx, ny))
     #u0[nx//4:3*nx//4, ny//4:3*ny//4] = np.random.rand(250,250) * 500
-    u0 = image_to_numpy("./Misc/silk.jpg")
+    u0 = image_to_numpy("./silk.jpg")
     # Rotate 180 degrees
     u0 = np.rot90(u0, 2)
     u[0] = u0
