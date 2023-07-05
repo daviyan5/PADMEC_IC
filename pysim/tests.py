@@ -66,7 +66,7 @@ def run_2wells(box_dimensions : tuple, order : int, mesh_args : tuple = None, ve
     name = "2Well"
     solver = TPFAsolver(verbose, verbose, name)
 
-    v1, v2 = 100., 0.00000001
+    v1, v2 = 100., 100.
     d1, d2 = 10000., 1.
     vq = 0.
 
@@ -372,10 +372,10 @@ def run_memory_tests(solutions: list, box_dimensions : tuple, meshfiles : list =
 
 def main():
     # meshlist = helpers.create_meshes((1, 1, 1), num = 20, suffix = "acc")
-    meshlist = ["mesh/box_{}acc.msh".format(i) for i in range(10)]
+    meshlist = ["mesh/box_{}acc.msh".format(i) for i in range(5)]
     #meshlist = ["mesh/cube_hex.msh"]
     #print(get_analytical_keys())
-
+    #K = helpers.get_tensor(1., nvols)
     solution1 = {
         "name"              : "x + y + z",
         "p"                 : lambda x, y, z: x + y + z,
@@ -406,9 +406,9 @@ def main():
     }
     solutions = [solution1, solution2, solution3, solution4]
     #run_accurracy_tests(solutions, (1, 1, 1), meshlist)
-    #run_time_tests([solution1, solution2, run_2wells], (1, 1, 1), meshlist)
-    run_memory_tests([solution1, solution2, run_2wells], (1, 1, 1), meshlist)
-    run_2wells((10,10,0.1), 100, verbose=True)
+    run_time_tests([solution1, solution2, run_2wells], (1, 1, 1), meshlist)
+    #run_memory_tests([solution1, solution2, run_2wells], (1, 1, 1), meshlist)
+    #run_2wells((10,10,0.1), 10000, verbose=True)
 
 
 if __name__ == '__main__':

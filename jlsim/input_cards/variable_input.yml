@@ -49,6 +49,20 @@ analytical_p:
   sparse: False
   level: 0
 
+d_volumes:
+  type: volumes
+  data size: 1
+  data type: int
+  sparse: False
+  level: 0
+  
+index:
+  type: volumes
+  data size: 1
+  data type: int
+  sparse: False
+  level: 0
+
 error:
   type: volumes
   data size: 1

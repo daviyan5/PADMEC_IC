@@ -113,7 +113,7 @@ def run_2wells(box_dimensions : tuple, order : int, mesh_args : tuple = None, ve
             "neumann"       : neumann,
             "dirichlet"     : dirichlet,
             "analytical"    : None,
-            "vtk"           : True
+            "vtk"           : False
         }
     return solver.solveTPFA(args)
 

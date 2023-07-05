@@ -14,12 +14,12 @@ sys.path.append('../')
 
 from preprocessor.meshHandle.finescaleMesh import FineScaleMesh                     # type: ignore 
 from scipy.sparse import csr_matrix
-from scipy.sparse.linalg import spsolve
+from scipy.sparse.linalg import spsolve,cg
 from pypardiso import spsolve as pypardiso_spsolve
 from numba import njit
 
 class TPFAsolver:
-    def __init__(self, verbose = True, check : bool = True, name: str = "MESH", fast_solver : bool = False) -> None:
+    def __init__(self, verbose = True, check : bool = True, name: str = "MESH", fast_solver : bool = True) -> None:
 
         # ==== ERROR HANDLING =======================================================================================#
         if not isinstance(verbose, bool) or not isinstance(check, bool):

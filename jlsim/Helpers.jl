@@ -25,7 +25,7 @@ function reset_verbose()
 end
 
 
-function verbose(msg :: String, type :: String, verbose :: Bool)
+function verbose(msg :: String, type :: String, verbose :: Bool = true)
     if verbose == false
         return
     end

@@ -10,16 +10,18 @@ function __init__()
         py"""
 
         import numpy as np
+        import os
+        import sys
 
         from preprocessor.meshHandle.finescaleMesh import FineScaleMesh 
 
         def get_mesh(mesh_filename : str) -> FineScaleMesh:
-            import os
-            import sys
+            
             sys.stdout = open(os.devnull, 'w')
             mesh = FineScaleMesh(mesh_filename, 3)
             sys.stdout.close()
             sys.stdout = sys.__stdout__
+    
             return mesh
 
         def get_volumes_centers(mesh: FineScaleMesh) -> np.ndarray:
@@ -68,6 +70,20 @@ function __init__()
             faces_index = mesh.faces.boundary[:]
             return mesh.faces.bridge_adjacencies(faces_index, 2, 3) + 1
         
+        def write_vtk(mesh : FineScaleMesh, numerical : np.ndarray, analytical : np.ndarray, d_volumes : np.ndarray, filename : str) -> str:
+            import os
+            meshset = mesh.core.mb.create_meshset()
+            mesh.index[:] = np.arange(1, len(numerical) + 1)
+            d_v = np.zeros_like(numerical)
+            d_v[d_volumes - 1] = 1
+            mesh.d_volumes[:] = d_v.astype(np.int)
+            mesh.numerical_p[:] = numerical
+            mesh.analytical_p[:] = analytical if analytical is not None else np.zeros_like(numerical)
+            mesh.core.mb.add_entities(meshset, mesh.core.all_volumes)
+            write_filename = os.path.join("vtks", filename)
+            mesh.core.mb.write_file(write_filename, [meshset])
+            return write_filename
+        
         """
 end
 
@@ -99,7 +115,7 @@ struct Mesh
         
         function Mesh(mesh_filename :: String)
             to = TO.TimerOutput()
-            @TO.timeit to "load mesh" mesh    = get_mesh(mesh_filename)
+            @TO.timeit to "load mesh" mesh = get_mesh(mesh_filename)
             nvols   = length(mesh.volumes.all[:])
             nfaces  = length(mesh.faces.all[:]) 
             
@@ -181,12 +197,17 @@ end
 
 function Base.show(io :: IO, m :: Mesh)
     println(io, "$(m.nvols)-element and $(m.nfaces)-faces from '$(m.mesh_filename)'")
-    println(io, "Time to build: \t\t$(TO.tottime(m.to) / 1e9) seconds")
-    print(io, "Allocated memory: \t$(TO.totallocated(m.to) / 1e6) MBytes")
+    println(io, "Mesh - Time to build: \t\t$(round(TO.tottime(m.to) / 1e9, digits = 3)) seconds")
+    print(io, "Mesh - Allocated memory: \t$(round(TO.totallocated(m.to) / 1e6, digits = 3)) MBytes")
 end
 
 function get_mesh(mesh_filename :: String) :: PyObject
     return py"get_mesh"(mesh_filename)
+end
+
+function write_vtk(mesh :: Mesh, numerical :: Vector{Float64}, analytical :: Union{Nothing, Vector{Float64}}, d_volumes :: Vector{Int64}, filename :: String)
+    vtk_filename = py"write_vtk"(mesh.mesh, numerical, analytical, d_volumes, filename)
+    return vtk_filename
 end
 
 

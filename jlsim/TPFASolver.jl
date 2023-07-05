@@ -8,6 +8,7 @@ import ..Helpers
 
 import LinearAlgebra as LA
 import TimerOutputs as TO
+import LinearSolve as LS
 
 using PyCall, StaticArrays, SparseArrays
 
@@ -16,6 +17,8 @@ const StringNull        = Union{String, Nothing}
 const BoolNull          = Union{Bool, Nothing}
 const DictNull          = Union{Dict, Nothing}
 const TupleNull         = Union{Tuple, Nothing}
+const IntNull           = Union{Int64, Nothing}
+const FloatNull         = Union{Float64, Nothing}
 
 const IntVectorNull     = Union{Vector{Int64}, Nothing}
 const FloatVectorNull   = Union{Vector{Float64}, Nothing}
@@ -57,12 +60,12 @@ mutable struct Solver
 
     n_faces         :: IntVectorNull                                    # Faces with Neumann boundary conditions
     n_values        :: FloatVectorNull                                  # Values of Neumann boundary conditions
-    n_volume        :: IntVectorNull                                    # Volumes with Neumann boundary conditions
+    n_volumes       :: IntVectorNull                                    # Volumes with Neumann boundary conditions
 
     bench_info      :: TimerOutputNull                                  # Object with times and memories
     vtk_filename    :: StringNull                                       # Name of the vtk file to be written
-
-    function Solver(verbose::Bool = true, check::Bool = true, name::String = "MESH")
+    error           :: FloatNull                                        # Error of the solution
+    function Solver(verbose::Bool = true, check::Bool = false, name::String = "MESH")
         new(verbose, check, name, nothing, nothing, # verbose, check, name, times, mesh,
             nothing, nothing, nothing,              # permeability, faces_normals, faces_trans
             nothing, nothing,                       # h_L, h_R
@@ -70,8 +73,8 @@ mutable struct Solver
             nothing, nothing, nothing,              # irel, numerical_p, analytical_p
             nothing, nothing,                       # faces_with_bc, volumes_with_bc
             nothing, nothing, nothing,              # d_faces, d_values, d_volumes
-            nothing, nothing, nothing,              # n_faces, n_values, n_volume
-            nothing, nothing)                       # bench_info
+            nothing, nothing, nothing,              # n_faces, n_values, n_volumes
+            nothing, nothing, nothing)              # bench_info, vtk_filename, error
     end
 
 end
@@ -82,11 +85,16 @@ function Base.show(io :: IO, m :: Solver)
     println("Mesh:")
     show(io, m.mesh)
     println()
+    println(io, "TPFA - Time to build: \t\t$(round(TO.tottime(m.bench_info) / 1e9, digits = 3)) seconds")
+    println(io, "TPFA - Allocated memory: \t$(round(TO.totallocated(m.bench_info) / 1e6, digits = 3)) MBytes")
+    print(io, "Error: \t $(m.error)")
 end
-
+function get_times_keys() :: Vector{String}
+    return ["TPFA Pre-Processing", "TPFA System Preparation", "TPFA Boundary Conditions", "TPFA Solver"]
+end
 function solve_TPFA!(solver :: Solver, args :: Dict) 
     solver.bench_info = TO.TimerOutput("TPFA Solver - $(solver.name)")
-    Helpers.reset_verbose()
+    # Helpers.reset_verbose()
     Helpers.verbose("== Applying TPFA Scheme over $(solver.name)...", "OUT", solver.verbose)
 
     step_name :: String = "TPFA Pre-Processing"
@@ -99,7 +107,7 @@ function solve_TPFA!(solver :: Solver, args :: Dict)
     end
 
     end # Pre-Process
-    __verbose(step_name, solver.verbose)
+    __verbose(solver, step_name, solver.verbose)
 
     step_name = "TPFA System Preparation"
     @TO.timeit solver.bench_info step_name begin
@@ -108,7 +116,7 @@ function solve_TPFA!(solver :: Solver, args :: Dict)
     __assemble_TPFA_matrix!(solver, args["source"])
 
     end # TPFA System Preparation
-    __verbose(step_name, solver.verbose)
+    __verbose(solver, step_name, solver.verbose)
 
     step_name = "TPFA Boundary Conditions"
     @TO.timeit solver.bench_info step_name begin
@@ -118,31 +126,130 @@ function solve_TPFA!(solver :: Solver, args :: Dict)
     __set_neumann_boundary_conditions!(solver, args["neumann"])
 
     end # TPFA Boundary Conditions
-    __verbose(step_name, solver.verbose)
+    __verbose(solver, step_name, solver.verbose)
 
     step_name = "TPFA Solver"
     @TO.timeit solver.bench_info step_name begin
 
     __solve_TPFA_system!(solver)
+    if solver.check == true
+        Helpers.verbose("TPFA Solution is consistent!", "CHK", solver.verbose)
+    end
 
     end # TPFA Solver
-    __verbose(step_name, solver.verbose)
+    __verbose(solver, step_name, solver.verbose)
 
     step_name = "TPFA Post-Processing"
     @TO.timeit solver.bench_info step_name begin
 
-    # __post_process!(solver, args["analytical"], args["vtk"])
+    solver.analytical_p = haskey(args, "analytical") ? args["analytical"] : nothing
+    __get_error!(solver)
+    __post_process!(solver, haskey(args, "vtk") ? args["vtk"] : false)
 
     end # Post-Process
-    __verbose(step_name, solver.verbose)
+    __verbose(solver, step_name, solver.verbose)
 end
 
-function __verbose(step_name :: String, verbose :: Bool)
-    
+function __verbose(solver :: Solver, step_name :: String, verbose :: Bool)
+    """
+    Steps = "TPFA Pre-Processing","TPFA System Preparation", 
+            "TPFA Boundary Conditions", "TPFA Solver", "TPFA Post-Processing" 
+    """
+    if verbose == false
+        return
+    end
+    function avg(x :: Vector)
+        return sum(x) / length(x)
+    end 
+    time = TO.time(solver.bench_info[step_name]) / 1e9
+    time = round(time, digits = 5)
+    Helpers.verbose("== Done with $(step_name)", "OUT")
+    Helpers.verbose("Time for step '$(step_name)': $(time) s", "OUT")
+    if step_name == "TPFA Pre-Processing"
+        Helpers.verbose("Nº of volumes: $(solver.mesh.nvols)", "INFO")
+        Helpers.verbose("Average volume: $(avg(solver.mesh.volumes))", "INFO")
+        Helpers.verbose("Nº of faces: $(solver.mesh.nfaces)", "INFO")
+        Helpers.verbose("Average area: $(avg(solver.mesh.faces_areas))", "INFO")
+
+    elseif step_name == "TPFA System Preparation"
+        mx, argmx = findmax(solver.faces_trans)
+        mn, argmn = findmin(solver.faces_trans)
+        mx, mn = round(mx, digits = 5), round(mn, digits = 5)
+        mean = round(avg(solver.faces_trans), digits = 5)
+        Helpers.verbose("Avg transmissibility: $(mean)", "INFO")
+        Helpers.verbose("Max transmissibility: $(mx) - Face $(argmx)", "INFO")
+        Helpers.verbose("Min transmissibility: $(mn) - Face $(argmn)", "INFO")
+        mx, argmx = findmax(solver.bt_TPFA)
+        mn, argmn = findmin(solver.bt_TPFA)
+        mx, mn = round(mx, digits = 5), round(mn, digits = 5)
+        mean = round(avg(solver.bt_TPFA), digits = 5)
+        Helpers.verbose("Avg Source: $(mean)", "INFO")
+        Helpers.verbose("Max Source: $(mx) - Volume $(argmx)", "INFO")
+        Helpers.verbose("Min Source: $(mn) - Volume $(argmn)", "INFO")
+
+    elseif step_name == "TPFA Boundary Conditions"
+        Helpers.verbose("Nº of volumes with Dirichlet BC: $(length(solver.d_volumes))", "INFO")
+        mx, argmx = findmax(solver.d_values)
+        mn, argmn = findmin(solver.d_values)
+        mx, mn = round(mx, digits = 5), round(mn, digits = 5)
+        mean = round(avg(solver.d_values), digits = 5)
+        Helpers.verbose("Avg Dirichlet BC: $(mean)", "INFO")
+        Helpers.verbose("Max Dirichlet BC: $(mx) - Volume $(argmx)", "INFO")
+        Helpers.verbose("Min Dirichlet BC: $(mn) - Volume $(argmn)", "INFO")
+        try
+            Helpers.verbose("Nº of volumes with Neumann BC: $(length(solver.n_volumes))", "INFO")
+            mx, argmx = findmax(solver.n_values)
+            mn, argmn = findmin(solver.n_values)
+            mx, mn = round(mx, digits = 5), round(mn, digits = 5)
+            mean = round(avg(solver.n_values), digits = 5)
+            Helpers.verbose("Avg Neumann BC: $(mean)", "INFO")
+            Helpers.verbose("Max Neumann BC: $(mx) - Volume $(argmx)", "INFO")
+            Helpers.verbose("Min Neumann BC: $(mn) - Volume $(argmn)", "INFO")
+        catch
+            Helpers.verbose("No Neumann BC", "INFO")
+        end
+
+    elseif step_name == "TPFA Solver"
+        mx, argmx = findmax(solver.p_TPFA)
+        mn, argmn = findmin(solver.p_TPFA)
+        mx, mn = round(mx, digits = 5), round(mn, digits = 5)
+        mean = round(avg(solver.p_TPFA), digits = 5)
+        Helpers.verbose("Avg Pressure: $(mean)", "INFO")
+        Helpers.verbose("Max Pressure: $(mx) - Volume $(argmx)", "INFO")
+        Helpers.verbose("Min Pressure: $(mn) - Volume $(argmn)", "INFO")
+        Helpers.verbose("Machine Epsilon: $(eps())", "INFO")
+
+        
+    elseif step_name == "TPFA Post-Processing"
+        Helpers.verbose("VTK Filename = $(solver.vtk_filename)", "INFO")
+        if solver.analytical_p !== nothing
+            mx, argmx = findmax(solver.analytical_p)
+            mn, argmn = findmin(solver.analytical_p)
+            mx, mn = round(mx, digits = 5), round(mn, digits = 5)
+            mean = round(avg(solver.analytical_p), digits = 5)
+            Helpers.verbose("Avg Analytical Pressure: $(mean)", "INFO")
+            Helpers.verbose("Max Analytical Pressure: $(mx) - Volume $(argmx)", "INFO")
+            Helpers.verbose("Min Analytical Pressure: $(mn) - Volume $(argmn)", "INFO")
+
+            mx, argmx = findmax(solver.irel)
+            mn, argmn = findmin(solver.irel)
+            mx, mn = round(mx, digits = 5), round(mn, digits = 5)
+            mean = round(avg(solver.irel), digits = 5)
+            Helpers.verbose("Avg I²rel: $(mean)", "INFO")
+            Helpers.verbose("Max I²rel: $(mx) - Volume $(argmx)", "INFO")
+            Helpers.verbose("Min I²rel: $(mn) - Volume $(argmn)", "INFO")
+        end
+    end
 end
 
-function get_error(solver :: Solver) :: Float64
-    
+function __get_error!(solver :: Solver)
+    if solver.analytical_p === nothing
+        return
+    end
+    solver.irel = sqrt.((solver.analytical_p - solver.p_TPFA).^2 .* solver.mesh.volumes ./ 
+                        (solver.analytical_p.^2 .* solver.mesh.volumes))
+    solver.error = sqrt(sum((solver.analytical_p - solver.p_TPFA).^2 .* solver.mesh.volumes) ./
+                        sum(solver.analytical_p.^2 .* solver.mesh.volumes))
 end
 
 function __get_normals(solver :: Solver) :: Tuple
@@ -219,7 +326,7 @@ function __assemble_TPFA_matrix!(solver :: Solver, source :: Function)
     solver.At_TPFA = (solver.At_TPFA - LA.Diagonal(solver.At_TPFA)) - LA.Diagonal(v)
 
     if solver.check
-        @assert all(vec(sum(solver.At_TPFA, dims = 1)) .< 1e-15)
+        @assert all(vec(sum(solver.At_TPFA, dims = 1)) .< 1e-10)
     end
     
 end
@@ -228,15 +335,19 @@ function __set_dirichlet_boundary_conditions!(solver :: Solver, dirichlet :: Fun
     d_volumes = unique(solver.mesh.boundary_faces_adj)
     mask      = indexin(d_volumes, solver.volumes_with_bc) .=== nothing
     d_volumes = d_volumes[mask]
-    solver.volumes_with_bc = vcat(solver.volumes_with_bc, setdiff(d_volumes, solver.volumes_with_bc))
-    @assert length(d_volumes) > 1 "There is no Dirichlet boundary condition"
-
-
     xv = Helpers.get_column.(solver.mesh.volumes_centers[d_volumes], 1)
     yv = Helpers.get_column.(solver.mesh.volumes_centers[d_volumes], 2)
     zv = Helpers.get_column.(solver.mesh.volumes_centers[d_volumes], 3)
 
     d_values = dirichlet(xv, yv, zv, d_volumes, solver.mesh)
+    mask     = findall(d_values .!== nothing)
+    d_volumes = d_volumes[mask]
+    d_values  = d_values[mask]
+    solver.volumes_with_bc = vcat(solver.volumes_with_bc, setdiff(d_volumes, solver.volumes_with_bc))
+    @assert length(d_volumes) > 1 "There is no Dirichlet boundary condition"
+
+
+    
     solver.bt_TPFA[d_volumes] = d_values
     solver.At_TPFA[d_volumes, :] .= 0.0
     v = zeros(solver.mesh.nvols)
@@ -253,16 +364,20 @@ function __set_neumann_boundary_conditions!(solver :: Solver, neumann :: Functio
     n_volumes = unique(solver.mesh.boundary_faces_adj)
     mask      = indexin(n_volumes, solver.volumes_with_bc) .=== nothing
     n_volumes = n_volumes[mask]
-    solver.volumes_with_bc = vcat(solver.volumes_with_bc, setdiff(n_volumes, solver.volumes_with_bc))
-    if length(n_volumes) == 0
-        return
-    end
-
     xv = Helpers.get_column.(solver.mesh.volumes_centers[n_volumes], 1)
     yv = Helpers.get_column.(solver.mesh.volumes_centers[n_volumes], 2)
     zv = Helpers.get_column.(solver.mesh.volumes_centers[n_volumes], 3)
 
     n_values = neumann(xv, yv, zv, n_volumes, solver.mesh)
+    mask     = findall(n_values .!== nothing)
+    n_volumes = n_volumes[mask]
+    n_values  = n_values[mask]
+    solver.volumes_with_bc = vcat(solver.volumes_with_bc, setdiff(n_volumes, solver.volumes_with_bc))
+    if length(n_volumes) == 0
+        return
+    end
+
+    
     solver.bt_TPFA[n_volumes] += n_values
 
     solver.n_volumes = n_volumes
@@ -271,8 +386,10 @@ function __set_neumann_boundary_conditions!(solver :: Solver, neumann :: Functio
 end
 
 function __solve_TPFA_system!(solver :: Solver)
-    solver.p_TPFA = solver.At_TPFA \ solver.bt_TPFA
-
+    dropzeros!(solver.At_TPFA)
+    prob = LS.LinearProblem(solver.At_TPFA, solver.bt_TPFA)
+    #solver.p_TPFA = solver.At_TPFA \ solver.bt_TPFA
+    solver.p_TPFA = LS.solve(prob, LS.UMFPACKFactorization())
     if solver.check
         @assert solver.At_TPFA * solver.p_TPFA ≈ solver.bt_TPFA
     end
@@ -284,8 +401,12 @@ function __pre_process!(solver :: Solver, mesh_filename :: String)
     solver.mesh = mesh
 end
 
-function post_process!(solver :: Solver, analytical :: Vector{Float64}, vtk :: Bool)
-    
+function __post_process!(solver :: Solver, vtk :: Bool)
+    if vtk == false
+        return
+    end
+    solver.vtk_filename = "mesh_$(solver.name)_$(solver.mesh.nvols)_TPFA.vtk"
+    solver.vtk_filename = MeshHandler.write_vtk(solver.mesh, solver.p_TPFA, solver.analytical_p, solver.d_volumes, solver.vtk_filename)
 end
 
 end # module

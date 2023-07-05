@@ -23,19 +23,17 @@ class MeshGenerator:
         v1 = gmsh.model.occ.addBox(0, 0, 0, Lx, Ly, Lz)
         gmsh.model.occ.synchronize()
 
-        vols_axis = int(order ** (1/3))
-        mn = min(Lx, Ly, Lz) ** 0.4
-        mx = max(Lx, Ly, Lz) ** 0.4
-        norm = np.sqrt(mn**2 + mx**2)
-        mn /= norm
-        mx /= norm
-        gmsh.option.setNumber("Mesh.CharacteristicLengthMin", mn / vols_axis)
-        gmsh.option.setNumber("Mesh.CharacteristicLengthMax", mx / vols_axis)
-        gmsh.option.setNumber('Mesh.MeshSizeMin', mn / vols_axis)
-        gmsh.option.setNumber('Mesh.MeshSizeMax', mx / vols_axis)
-        gmsh.model.mesh.setTransfiniteAutomatic()
+        for c in gmsh.model.getEntities(1):
+            if c[1] in [1, 3, 5, 7]:
+                gmsh.model.mesh.setTransfiniteCurve(c[1], 2)
+            else:
+                gmsh.model.mesh.setTransfiniteCurve(c[1], order)
+        for s in gmsh.model.getEntities(2):
+            gmsh.model.mesh.setTransfiniteSurface(s[1])
+            gmsh.model.mesh.setRecombine(s[0], s[1])
+            gmsh.model.mesh.setSmoothing(s[0], s[1], 100)
+        gmsh.model.mesh.setTransfiniteVolume(v1)
         gmsh.model.mesh.generate(3)
-
         
         if filename is None:
             filename = "box.msh"
@@ -52,9 +50,13 @@ class MeshGenerator:
 
 def main():
     MeshGen = MeshGenerator()
-    Lx, Ly, Lz = 1, 1, 1
+    Lx, Ly, Lz = 6, 4, 1
     # Create 20 boxes
-    MeshGen.create_box((Lx, Ly, Lz), 1, "teste.msh", False)
+    order = 2
+    for i in range(10):
+        MeshGen.create_box((Lx, Ly, Lz), order + 1, "box_{}.msh".format(i), False)
+        print("Created box_{}.msh".format(i))
+        order *= 2
 
 if __name__ == "__main__":
     main()
