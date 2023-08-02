@@ -55,7 +55,7 @@ def run_test1D(box_dimensions : tuple, order : int, mesh_args : tuple = None, ve
         }
     return solver.solveTPFA(args)
 
-def run_2wells(box_dimensions : tuple, order : int, mesh_args : tuple = None, verbose : bool = False) -> dict:
+def run_QFiveSpots(box_dimensions : tuple, order : int, mesh_args : tuple = None, verbose : bool = False) -> dict:
     Lx, Ly, Lz = box_dimensions
     mesh, mesh_params = None, None
     if mesh_args is None:
@@ -63,7 +63,7 @@ def run_2wells(box_dimensions : tuple, order : int, mesh_args : tuple = None, ve
         mesh = helpers.load_mesh(meshfile)
     else:
         mesh, mesh_params = mesh_args
-    name = "2Well"
+    name = "QFiveSpot"
     solver = TPFAsolver(verbose, verbose, name)
 
     v1, v2 = 100., 100.
@@ -253,7 +253,7 @@ def run_time_tests(solutions : list, box_dimensions : tuple, meshfiles : list = 
         for i, solution in enumerate(solutions):
             iter_times = []
             for k in range(num_tests):
-                name = solution["name"] if type(solution) == dict else "2Well"
+                name = solution["name"] if type(solution) == dict else "QFiveSpot"
                 if type(solution) == dict:
                     helpers.verbose("Starting T-test [{}/{} - {}/{}] for {} volumes for case {}.".format(k, num_tests, j, num_meshes, nvols, name), type_msg = "OUT")
                     results = run_analytical(box_dimensions, 1, K,  solution, mesh_args, verbose = verbose)
@@ -278,7 +278,7 @@ def run_time_tests(solutions : list, box_dimensions : tuple, meshfiles : list = 
     markers = ["p", "s", "o", "v", "D"]
     for i, time_d in enumerate(times):
         
-        name   = solutions[i]["name"] if type(solutions[i]) == dict else "2Well"  
+        name   = solutions[i]["name"] if type(solutions[i]) == dict else "QFiveSpot"  
 
         
         time_d = np.array(time_d, dtype = float)
@@ -327,7 +327,7 @@ def run_memory_tests(solutions: list, box_dimensions : tuple, meshfiles : list =
         for i, solution in enumerate(solutions):
             iter_memory = []
             for k in range(num_tests):
-                name = solution["name"] if type(solution) == dict else "2Well"
+                name = solution["name"] if type(solution) == dict else "QFiveSpot"
                 if type(solution) == dict:
                     helpers.verbose("Starting M-test [{}/{} - {}/{}] for {} volumes for case {}.".format(k, num_tests, j, num_meshes, nvols, name), type_msg = "OUT")
                     tracemalloc.start()
@@ -356,7 +356,7 @@ def run_memory_tests(solutions: list, box_dimensions : tuple, meshfiles : list =
     markers = ["p", "s", "o", "v", "D"]
     for i, mem_d in enumerate(memory_cost):
         mem_d = np.array(mem_d, dtype = float)
-        name   = solutions[i]["name"] if type(solutions[i]) == dict else "2Well"  
+        name   = solutions[i]["name"] if type(solutions[i]) == dict else "QFiveSpot"  
         ax.plot(mem_d[:, 0], mem_d[:, 1], marker = markers[i % len(markers)], color = c[i % len(c)], label = name)
 
     
@@ -406,9 +406,9 @@ def main():
     }
     solutions = [solution1, solution2, solution3, solution4]
     #run_accurracy_tests(solutions, (1, 1, 1), meshlist)
-    #run_time_tests([solution1, solution2, run_2wells], (1, 1, 1), meshlist)
-    #run_memory_tests([solution1, solution2, run_2wells], (1, 1, 1), meshlist)
-    run_2wells((10,10,0.1), 10000, verbose=True)
+    #run_time_tests([solution1, solution2, run_QFiveSpots], (1, 1, 1), meshlist)
+    #run_memory_tests([solution1, solution2, run_QFiveSpots], (1, 1, 1), meshlist)
+    run_QFiveSpots((10,10,0.1), 10000, verbose=True)
 
 
 if __name__ == '__main__':

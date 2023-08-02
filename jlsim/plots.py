@@ -2,9 +2,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
-def plot_accuracy(res : dict, vols : np.ndarray, vols2Well : np.ndarray):
+def plot_accuracy(res : dict, vols : np.ndarray, volsQFiveSpot : np.ndarray):
     vols = np.array(vols)
-    vols2Well = np.array(vols2Well)
+    volsQFiveSpot = np.array(volsQFiveSpot)
     n = int(np.ceil(len(res) / 2))
     m = int(np.ceil(len(res) / n))
     names = list(res.keys())
@@ -17,8 +17,17 @@ def plot_accuracy(res : dict, vols : np.ndarray, vols2Well : np.ndarray):
         ax[a, b].set_xscale("log")
         ax[a, b].set_yscale("log")
         res[name] = np.mean(res[name], axis = 1)
-        pvols = vols if name != "2Well" else vols2Well
+        pvols = vols if name != "QFiveSpot" else volsQFiveSpot
         res[name] = res[name][:len(pvols)]
+
+        tgalpha = np.polyfit(np.log(pvols), np.log(res[name]), 1)[0]
+        
+        
+        q = -3 * (np.log(res[name][1:] / res[name][:-1]) / np.log(pvols[1:] / pvols[:-1]))
+        print("q = ", q)
+        np.save("./tests/accuracy_tests/error_{}".format(''.join(c for c in name if c.isalnum())), res[name])
+        np.save("./tests/accuracy_tests/vols_{}".format(''.join(c for c in name if c.isalnum())), pvols)
+
         ax[a, b].plot(pvols, res[name], color = c[i % len(c)], marker = "p", label = "I²rel")
         scale_vols = res[name][0] * (pvols[0] ** 2) / (pvols ** 2)
         if i <= 1:
@@ -34,9 +43,9 @@ def plot_accuracy(res : dict, vols : np.ndarray, vols2Well : np.ndarray):
     plt.savefig("./tests/accuracy_tests/accuracy.png")
     plt.clf()
 
-def plot_times(res : dict, vols : np.array, vols2Well : np.ndarray):
+def plot_times(res : dict, vols : np.array, volsQFiveSpot : np.ndarray):
     vols = np.array(vols)
-    vols2Well = np.array(vols2Well)
+    volsQFiveSpot = np.array(volsQFiveSpot)
     n = 2
     m = 2
 
@@ -48,7 +57,7 @@ def plot_times(res : dict, vols : np.array, vols2Well : np.ndarray):
     for i, name in enumerate(names):
         
         for j, key in enumerate(res[name]):
-            pvols = vols if name != "2Well" else vols2Well
+            pvols = vols if name != "QFiveSpot" else volsQFiveSpot
             res[name][key] = res[name][key][:len(pvols)]
             res[name][key] = np.mean(res[name][key], axis = 1)
             a, b = j // m, j % m
@@ -64,15 +73,15 @@ def plot_times(res : dict, vols : np.array, vols2Well : np.ndarray):
     plt.savefig("./tests/time_tests/times.png")
     plt.clf()
 
-def plot_memory(res : dict, vols : np.array, vols2Well : np.ndarray):
+def plot_memory(res : dict, vols : np.array, volsQFiveSpot : np.ndarray):
     vols = np.array(vols)
-    vols2Well = np.array(vols2Well)
+    volsQFiveSpot = np.array(volsQFiveSpot)
     fig, ax = plt.subplots(1, 1, figsize = (11, 6))
     fig.suptitle("Comparação de Memória Utilizada - JULIA")
     c = ["black", "blue", "green", "red", "grey"]
     markers = ["p", "s", "o", "v", "D"]
     for i, name in enumerate(res):
-        pvols = vols if name != "2Well" else vols2Well
+        pvols = vols if name != "QFiveSpot" else volsQFiveSpot
         res[name] = res[name][:len(pvols)]
         res[name] = np.mean(res[name], axis = 1)
         ax.plot(pvols, res[name], label = name, color = c[i % len(c)], marker = markers[i % len(markers)])

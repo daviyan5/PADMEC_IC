@@ -1,7 +1,0 @@
-1. Realizar medição com IMPRESS e reler artigo com descrição do teste
-2. Encontrar o gráfico analítico para o caso linear
-2. Criar casos com solução analítica conhecida e plotar
-3. Criar malhas no gmesh
-
-1. Alterar tratamento de condições de contorno
-2. Plotar tempo x volumes para o mesmo caso, com o spsolve

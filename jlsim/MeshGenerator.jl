@@ -19,7 +19,7 @@ function create_box(box_dimensions :: Tuple, order :: Int64, filename :: String 
     v1 = gmsh.model.occ.add_box(0, 0, 0, Lx, Ly, Lz)
     gmsh.model.occ.synchronize()
 
-    vols_axis = Int16(order ^ (1/3))
+    vols_axis = floor(order ^ (1/3))
     mn = min(Lx, Ly, Lz) ^ (0.4)
     mx = max(Lx, Ly, Lz) ^ (0.4)
     norm = sqrt(mn ^ 2 + mx ^ 2)
@@ -37,7 +37,6 @@ function create_box(box_dimensions :: Tuple, order :: Int64, filename :: String 
         filename = "box.msh"
     end
     
-
     filename = Base.joinpath("mesh", filename)
     gmsh.write(filename)
     gmsh.finalize()
@@ -50,8 +49,11 @@ end # module MeshGenerator
 import .MeshGenerator: create_box
 function testing()
     Lx, Ly, Lz = 1.0, 1.0, 1.0
-    create_box((Lx, Ly, Lz), 1, "box.msh", true)
+    for i in 0:20
+        println("Generating box with order $(2^(i + 1))")
+        create_box((Lx, Ly, Lz), 2^(i + 1), "box_$(i)acc.msh", false)
+    end
     
 end
 
-#testing()
+testing()

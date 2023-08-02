@@ -146,7 +146,7 @@ function extra_case2(mesh :: MeshHandler.Mesh, verbose :: Bool = false) :: TPFAS
     
 end
 
-function Well2_case(mesh :: MeshHandler.Mesh, box_dimensions :: Tuple = (1, 1, 1), verbose :: Bool = false) :: TPFASolver.Solver
+function QFiveSpot_case(mesh :: MeshHandler.Mesh, box_dimensions :: Tuple = (1, 1, 1), verbose :: Bool = false) :: TPFASolver.Solver
     
     Lx, Ly, Lz = box_dimensions
     d1 = 10000.
@@ -179,7 +179,7 @@ function Well2_case(mesh :: MeshHandler.Mesh, box_dimensions :: Tuple = (1, 1, 1
         return ones(length(x)) .* vq
     end
     function analytical(x :: Vector, y :: Vector, z :: Vector) :: Vector
-        ref = DF.readdlm("vtks/2WellRef.txt", ',')
+        ref = DF.readdlm("vtks/QFiveSpotRef.txt", ',')
         xr  = ref[:, 1]
         yr  = ref[:, 2]
         pr  = ref[:, 4]
@@ -201,7 +201,7 @@ function Well2_case(mesh :: MeshHandler.Mesh, box_dimensions :: Tuple = (1, 1, 1
     end
 
     permeability = Helpers.get_tensor(k1, mesh.nvols, 3, 3, true)
-    solver = TPFASolver.Solver(verbose, true, "2Well")
+    solver = TPFASolver.Solver(verbose, true, "QFiveSpot")
     xv, yv, zv, idx = Helpers.get_column.(mesh.volumes_centers, 1), 
                       Helpers.get_column.(mesh.volumes_centers, 2), 
                       Helpers.get_column.(mesh.volumes_centers, 3), 
@@ -225,32 +225,32 @@ function Well2_case(mesh :: MeshHandler.Mesh, box_dimensions :: Tuple = (1, 1, 1
     
 end
 
-function run_tests(meshfiles :: Array, meshfiles_2Well :: Array, try_precompile :: Bool = true)
+function run_tests(meshfiles :: Array, meshfiles_QFiveSpot :: Array, try_precompile :: Bool = true)
     if try_precompile
         meshfile = "./mesh/cube_hex.msh"
         aux_solver = linear_case(MeshHandler.Mesh(meshfile))
     end
     function general_test(meshfiles :: Array, test_functions :: Array{Function}, add_to_solver :: Function, 
                           n_tests :: Int64, n_reps :: Int64, res :: Dict, vols :: Array, verbose :: Bool = false, type = "GNR",
-                          meshfiles_2Well :: Array = [], vols2Well :: Array = [])
+                          meshfiles_QFiveSpot :: Array = [], volsQFiveSpot :: Array = [])
         for (i, (meshfile, box_dimensions)) in enumerate(meshfiles)
             if i > n_tests
                 break
             end
             mesh = MeshHandler.Mesh(meshfile)
-            mesh2Well = i <= length(meshfiles_2Well) ? MeshHandler.Mesh(meshfiles_2Well[i][1]) : nothing
-            if i <= length(meshfiles_2Well)
-                append!(vols2Well, mesh2Well.nvols)
+            meshQFiveSpot = i <= length(meshfiles_QFiveSpot) ? MeshHandler.Mesh(meshfiles_QFiveSpot[i][1]) : nothing
+            if i <= length(meshfiles_QFiveSpot)
+                append!(volsQFiveSpot, meshQFiveSpot.nvols)
             end
             append!(vols, mesh.nvols)
             
             for j in 1:n_reps
                 Helpers.verbose("Starting $(type) test [$(i)/$(n_tests), $(j)/$(n_reps)] for $(mesh.nvols)", "OUT")
                 for f in test_functions
-                    if f == Well2_case && mesh2Well !== nothing
-                        solver = f(mesh2Well, meshfiles_2Well[i][2])
+                    if f == QFiveSpot_case && meshQFiveSpot !== nothing
+                        solver = f(meshQFiveSpot, meshfiles_QFiveSpot[i][2])
                         add_to_solver(solver, i, j, res)
-                    elseif f != Well2_case
+                    elseif f != QFiveSpot_case
                         solver = f(mesh)
                         add_to_solver(solver, i, j, res)
                     end
@@ -265,9 +265,9 @@ function run_tests(meshfiles :: Array, meshfiles_2Well :: Array, try_precompile 
         println("Running accuracy tests")
         n_mesh = length(meshfiles)
         acc = Dict{String, Matrix{Float64}}()
-        test_functions = [linear_case, quadratic_case, Well2_case, extra_case2]
+        test_functions = [quadratic_case, QFiveSpot_case, extra_case1, extra_case2] #[linear_case, quadratic_case, QFiveSpot_case, extra_case2]
         vols = []
-        vols2Well = []
+        volsQFiveSpot = []
         function add_to_solver(solver :: TPFASolver.Solver, i :: Int64, j :: Int64, res :: Dict)
             name = solver.name
             if haskey(res, name)
@@ -277,7 +277,7 @@ function run_tests(meshfiles :: Array, meshfiles_2Well :: Array, try_precompile 
                 res[name][i, j] = solver.error
             end
         end
-        general_test(meshfiles, test_functions, add_to_solver, n_tests, n_reps, acc, vols, false, "ACC", meshfiles_2Well, vols2Well)
+        general_test(meshfiles, test_functions, add_to_solver, n_tests, n_reps, acc, vols, false, "ACC", meshfiles_QFiveSpot, volsQFiveSpot)
         Helpers.verbose("Done with accuracy tests", "OUT")
         Helpers.verbose("=", "OUT")
         for (name, matrix) in acc
@@ -285,7 +285,7 @@ function run_tests(meshfiles :: Array, meshfiles_2Well :: Array, try_precompile 
             display(matrix)
             println()
         end
-        py"plot_accuracy"(acc, vols, vols2Well)
+        py"plot_accuracy"(acc, vols, volsQFiveSpot)
     end
 
     function run_times(meshfiles :: Array, n_tests :: Int64, n_reps :: Int64)
@@ -295,8 +295,8 @@ function run_tests(meshfiles :: Array, meshfiles_2Well :: Array, try_precompile 
 
         times = Dict{String, Dict{String, Matrix{Float64}}}()
         vols = []
-        vols2Well = []
-        test_functions = [linear_case, quadratic_case, Well2_case]
+        volsQFiveSpot = []
+        test_functions = [linear_case, quadratic_case, QFiveSpot_case]
 
         function add_to_solver(solver :: TPFASolver.Solver, i :: Int64, j :: Int64, res :: Dict)
             name = solver.name
@@ -323,7 +323,7 @@ function run_tests(meshfiles :: Array, meshfiles_2Well :: Array, try_precompile 
                 res[name]["Total Time"][i, j] += TO.tottime(solver.bench_info) / 1e9
             end
         end
-        general_test(meshfiles, test_functions, add_to_solver, n_tests, n_reps, times, vols,  false, "TIME", meshfiles_2Well, vols2Well)
+        general_test(meshfiles, test_functions, add_to_solver, n_tests, n_reps, times, vols,  false, "TIME", meshfiles_QFiveSpot, volsQFiveSpot)
         Helpers.verbose("Done with times tests", "OUT")
         Helpers.verbose("=", "OUT")
         for (name, dict) in times
@@ -334,7 +334,7 @@ function run_tests(meshfiles :: Array, meshfiles_2Well :: Array, try_precompile 
             end
             println()
         end
-        py"plot_times"(times, vols, vols2Well)
+        py"plot_times"(times, vols, volsQFiveSpot)
         
     end
 
@@ -345,8 +345,8 @@ function run_tests(meshfiles :: Array, meshfiles_2Well :: Array, try_precompile 
 
         mem = Dict{String, Matrix{Float64}}()
         vols = []
-        vols2Well = []
-        test_functions = [linear_case, quadratic_case, Well2_case]
+        volsQFiveSpot = []
+        test_functions = [linear_case, quadratic_case, QFiveSpot_case]
         function add_to_solver(solver :: TPFASolver.Solver, i :: Int64, j :: Int64, res :: Dict)
             name = solver.name
             if haskey(res, name)
@@ -356,7 +356,7 @@ function run_tests(meshfiles :: Array, meshfiles_2Well :: Array, try_precompile 
                 res[name][i, j] += TO.totallocated(solver.bench_info) / 1e6 
             end
         end
-        general_test(meshfiles, test_functions, add_to_solver, n_tests, n_reps, mem, vols, false, "MEM", meshfiles_2Well, vols2Well)
+        general_test(meshfiles, test_functions, add_to_solver, n_tests, n_reps, mem, vols, false, "MEM", meshfiles_QFiveSpot, volsQFiveSpot)
         Helpers.verbose("Done with memory tests", "OUT")
         Helpers.verbose("=", "OUT")
         for (name, matrix) in mem
@@ -364,21 +364,21 @@ function run_tests(meshfiles :: Array, meshfiles_2Well :: Array, try_precompile 
             display(matrix)
             println()
         end
-        py"plot_memory"(mem, vols, vols2Well)
+        py"plot_memory"(mem, vols, volsQFiveSpot)
     end
         
     n_tests, n_reps = 14, 1
     run_accuracy(meshfiles, n_tests, n_reps)
 
     n_tests, n_reps = 14, 10
-    run_times(meshfiles,n_tests, n_reps)
+    #run_times(meshfiles,n_tests, n_reps)
     
     n_tests, n_reps = 14, 10
-    run_memory(meshfiles, n_tests, n_reps)
+    #run_memory(meshfiles, n_tests, n_reps)
 
 end
 
-function create_2Well_ref()
+function create_QFiveSpot_ref()
     meshfile = "./mesh/box_9.msh"
     mesh :: Union{MeshHandler.Mesh, Nothing} = nothing
     if isfile("./mesh/mesh9.jld2")
@@ -388,22 +388,23 @@ function create_2Well_ref()
         mesh = MeshHandler.Mesh(meshfile)
         JLD2.jldsave("./mesh/mesh9.jld2"; mesh)
     end
-    solver = Well2_case(mesh, (6, 4, 1), true)
+    solver = QFiveSpot_case(mesh, (6, 4, 1), true)
     xv, yv, zv =    Helpers.get_column.(mesh.volumes_centers, 1), 
                     Helpers.get_column.(mesh.volumes_centers, 2), 
                     Helpers.get_column.(mesh.volumes_centers, 3)
 
-    DF.writedlm("./vtks/2WellRef.txt", [xv yv zv solver.p_TPFA], ',')
+    DF.writedlm("./vtks/QFiveSpotRef.txt", [xv yv zv solver.p_TPFA], ',')
 end
 function main()
     
-    create_2Well_ref()
-    meshfiles_2Well = [("./mesh/box_$(i).msh", (6, 4, 1)) for i in 2:9]
-    meshfiles       = [("./mesh/box_$(i)acc.msh", (1, 1, 1)) for i in 0:14]
-    run_tests(meshfiles, meshfiles_2Well, true)
+    #create_QFiveSpot_ref()
+    meshfiles_QFiveSpot = [("./mesh/box_$(i).msh", (6, 4, 1)) for i in 2:8]
+    meshfiles_QFiveSpot = []
+    meshfiles           = [("./mesh/box_$(i)acc.msh", (1, 1, 1)) for i in 0:6]
+    run_tests(meshfiles, meshfiles_QFiveSpot, true)
     #solver = extra_case1(MeshHandler.Mesh(meshfiles[2][1]), true)
     #show(solver.bench_info)
-    #Well2_case(MeshHandler.Mesh(meshfiles[7][1]), meshfiles[7][2], true)
+    #QFiveSpot_case(MeshHandler.Mesh(meshfiles[7][1]), meshfiles[7][2], true)
     
 end
 

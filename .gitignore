@@ -6,3 +6,7 @@ pysim_old
 jlsim/mesh/
 jlsim/__pycache__
 .gitignore
+*.msh
+*.mat
+*.npy
+*.vtk

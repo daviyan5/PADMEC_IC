@@ -209,10 +209,8 @@ def run_accurracy_tests(analytical_solutions : list, box_dimensions : tuple,  me
         errors[sol_name] = np.array(errors[sol_name])
         vols = errors[sol_name][:, 0]
         erro = errors[sol_name][:, 1]
-        ratio = ax[a][b].get_data_ratio()
-        tgalpha = ratio * ((np.log10(erro[0]) - np.log10(erro[-1])) /
-                           (np.log10(vols[-1]) - np.log10(vols[0])))
-        print("tgalpha: ", tgalpha)
+        
+       
         ax[a][b].plot(vols, erro, label = "I²rel", color = c[i % len(c)], marker = "p")
 
         scale_vols = (erro[0] * (vols[0] ** 2)) / vols ** 2
@@ -372,7 +370,7 @@ def run_memory_tests(solutions: list, box_dimensions : tuple, meshfiles : list =
 
 def main():
     # meshlist = helpers.create_meshes((1, 1, 1), num = 20, suffix = "acc")
-    meshlist = ["mesh/box_{}acc.msh".format(i) for i in range(5)]
+    meshlist = ["mesh/box_{}acc.msh".format(i) for i in range(6)]
     #meshlist = ["mesh/cube_hex.msh"]
     #print(get_analytical_keys())
     #K = helpers.get_tensor(1., nvols)
@@ -405,8 +403,8 @@ def main():
         "neumann"           : lambda x, y, z:       np.zeros_like(x)
     }
     solutions = [solution1, solution2, solution3, solution4]
-    #run_accurracy_tests(solutions, (1, 1, 1), meshlist)
-    run_time_tests([solution1, solution2, run_2wells], (1, 1, 1), meshlist)
+    run_accurracy_tests(solutions, (1, 1, 1), meshlist)
+    #run_time_tests([solution1, solution2, run_2wells], (1, 1, 1), meshlist)
     #run_memory_tests([solution1, solution2, run_2wells], (1, 1, 1), meshlist)
     #run_2wells((10,10,0.1), 10000, verbose=True)
 
