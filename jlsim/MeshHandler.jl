@@ -7,84 +7,84 @@ import TimerOutputs as TO
 using PyCall, StaticArrays
 
 function __init__()
-        py"""
+py"""
+import numpy as np
+import os
+import sys
 
-        import numpy as np
-        import os
-        import sys
+from preprocessor.meshHandle.finescaleMesh import FineScaleMesh 
 
-        from preprocessor.meshHandle.finescaleMesh import FineScaleMesh 
-
-        def get_mesh(mesh_filename : str) -> FineScaleMesh:
-            
-            sys.stdout = open(os.devnull, 'w')
-            mesh = FineScaleMesh(mesh_filename, 3)
-            sys.stdout.close()
-            sys.stdout = sys.__stdout__
+def get_mesh(mesh_filename : str) -> FineScaleMesh:
     
-            return mesh
+    sys.stdout = open(os.devnull, 'w')
+    mesh = FineScaleMesh(mesh_filename, 3)
+    
+    sys.stdout.close()
+    sys.stdout = sys.__stdout__
 
-        def get_volumes_centers(mesh: FineScaleMesh) -> np.ndarray:
-            return mesh.volumes.center[:]
-        
-        def get_faces_centers(mesh: FineScaleMesh) -> np.ndarray:
-            return mesh.faces.center[:]
-        
-        def get_volumes_connectivity(mesh: FineScaleMesh) -> np.ndarray:
-            return mesh.volumes.connectivities[:] + 1
+    return mesh
 
-        def get_nodes_center(mesh: FineScaleMesh) -> np.ndarray:
-            return mesh.nodes.coords[:]
+def get_volumes_centers(mesh: FineScaleMesh) -> np.ndarray:
+    return mesh.volumes.center[:]
 
-        def get_faces_connectivity(mesh: FineScaleMesh) -> np.ndarray:
-            return mesh.faces.connectivities[:] + 1
-        
-        def get_internal_faces(mesh: FineScaleMesh) -> np.ndarray:
-            return mesh.faces.internal[:] + 1
-        
-        def get_boundary_faces(mesh: FineScaleMesh) -> np.ndarray:
-            return mesh.faces.boundary[:] + 1
-        
-        def get_faces_by_volume(mesh: FineScaleMesh) -> np.ndarray:
-            return mesh.volumes.bridge_adjacencies(mesh.volumes.all, 3, 2) + 1
+def get_faces_centers(mesh: FineScaleMesh) -> np.ndarray:
+    return mesh.faces.center[:]
 
-        def get_volumes_adjacent_faces(mesh: FineScaleMesh) -> np.ndarray:
-            return mesh.volumes.bridge_adjacencies(mesh.volumes.all, 3, 2) + 1
+def get_volumes_connectivity(mesh: FineScaleMesh) -> np.ndarray:
+    return mesh.volumes.connectivities[:] + 1
 
-        def get_internal_faces_adjacent_volumes(mesh: FineScaleMesh) -> np.ndarray:
-            faces_index     = mesh.faces.internal[:]
-            vols_pairs      = mesh.faces.bridge_adjacencies(faces_index, 2, 3)
-            nvols_pairs     = vols_pairs.shape[0]
-            faces_centers   = mesh.faces.center[faces_index]
-            volumes_centers = mesh.volumes.center[vols_pairs.flatten()]
-            volumes_centers = volumes_centers.reshape(nvols_pairs, 2, 3)
+def get_nodes_center(mesh: FineScaleMesh) -> np.ndarray:
+    return mesh.nodes.coords[:]
 
-            L = volumes_centers[:, 0]
+def get_faces_connectivity(mesh: FineScaleMesh) -> np.ndarray:
+    return mesh.faces.connectivities[:] + 1
 
-            vL = (L - faces_centers).sum(axis = 1)
+def get_internal_faces(mesh: FineScaleMesh) -> np.ndarray:
+    return mesh.faces.internal[:] + 1
 
-            vols_pairs[vL > 0, 0], vols_pairs[vL > 0, 1] = vols_pairs[vL > 0, 1], vols_pairs[vL > 0, 0]
-            return vols_pairs + np.array([1, 1])
-        
-        def get_boundary_faces_adjacent_volumes(mesh: FineScaleMesh) -> np.ndarray:
-            faces_index = mesh.faces.boundary[:]
-            return mesh.faces.bridge_adjacencies(faces_index, 2, 3) + 1
-        
-        def write_vtk(mesh : FineScaleMesh, numerical : np.ndarray, analytical : np.ndarray, d_volumes : np.ndarray, filename : str) -> str:
-            import os
-            meshset = mesh.core.mb.create_meshset()
-            mesh.index[:] = np.arange(1, len(numerical) + 1)
-            d_v = np.zeros_like(numerical)
-            d_v[d_volumes - 1] = 1
-            mesh.d_volumes[:] = d_v.astype(np.int)
-            mesh.numerical_p[:] = numerical
-            mesh.analytical_p[:] = analytical if analytical is not None else np.zeros_like(numerical)
-            mesh.core.mb.add_entities(meshset, mesh.core.all_volumes)
-            write_filename = os.path.join("vtks", filename)
-            mesh.core.mb.write_file(write_filename, [meshset])
-            return write_filename
-        
-        """
+def get_boundary_faces(mesh: FineScaleMesh) -> np.ndarray:
+    return mesh.faces.boundary[:] + 1
+
+def get_faces_by_volume(mesh: FineScaleMesh) -> np.ndarray:
+    return mesh.volumes.bridge_adjacencies(mesh.volumes.all, 3, 2) + 1
+
+def get_volumes_adjacent_faces(mesh: FineScaleMesh) -> np.ndarray:
+    return mesh.volumes.bridge_adjacencies(mesh.volumes.all, 3, 2) + 1
+
+def get_internal_faces_adjacent_volumes(mesh: FineScaleMesh) -> np.ndarray:
+    faces_index     = mesh.faces.internal[:]
+    vols_pairs      = mesh.faces.bridge_adjacencies(faces_index, 2, 3)
+    nvols_pairs     = vols_pairs.shape[0]
+    faces_centers   = mesh.faces.center[faces_index]
+    volumes_centers = mesh.volumes.center[vols_pairs.flatten()]
+    volumes_centers = volumes_centers.reshape(nvols_pairs, 2, 3)
+
+    L = volumes_centers[:, 0]
+
+    vL = (L - faces_centers).sum(axis = 1)
+
+    vols_pairs[vL > 0, 0], vols_pairs[vL > 0, 1] = vols_pairs[vL > 0, 1], vols_pairs[vL > 0, 0]
+    return vols_pairs + np.array([1, 1])
+
+def get_boundary_faces_adjacent_volumes(mesh: FineScaleMesh) -> np.ndarray:
+    faces_index = mesh.faces.boundary[:]
+    return mesh.faces.bridge_adjacencies(faces_index, 2, 3) + 1
+
+def write_vtk(mesh : FineScaleMesh, numerical : np.ndarray, analytical : np.ndarray, d_volumes : np.ndarray, filename : str) -> str:
+    import os
+    meshset = mesh.core.mb.create_meshset()
+    mesh.index[:] = np.arange(1, len(numerical) + 1)
+    d_v = np.zeros_like(numerical)
+    d_v[d_volumes - 1] = 1
+    mesh.d_volumes[:] = d_v.astype(np.int)
+    mesh.numerical_p[:] = numerical
+    mesh.analytical_p[:] = analytical if analytical is not None else np.zeros_like(numerical)
+    mesh.core.mb.add_entities(meshset, mesh.core.all_volumes)
+    write_filename = os.path.join("vtks", filename)
+    mesh.core.mb.write_file(write_filename, [meshset])
+    return write_filename
+
+"""
 end
 
 struct Mesh
@@ -118,7 +118,6 @@ struct Mesh
             @TO.timeit to "load mesh" mesh = get_mesh(mesh_filename)
             nvols   = length(mesh.volumes.all[:])
             nfaces  = length(mesh.faces.all[:]) 
-            
             @TO.timeit to "get volumes centers" begin
             vc_matrix           = py"get_volumes_centers"(mesh)
             volumes_centers_aux = Vector{eltype(vc_matrix)}[eachcol(transpose(vc_matrix))...]

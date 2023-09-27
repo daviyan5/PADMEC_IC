@@ -29,7 +29,9 @@ def reset_verbose():
     print_generator = print_idx()
     print("-" * 100)
 
-def verbose(msg, type_msg):
+def verbose(msg, type_msg, verbose = True):
+    if not verbose:
+        return
     lim = 100
     suf1 = " " + "=" * lim
     suf2 = " " + '+' * lim

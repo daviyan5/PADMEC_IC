@@ -1,6 +1,6 @@
 function problems = Tests()
     meshfiles = [];
-    for i = 0:14
+    for i = 0:12
         meshfiles = [meshfiles, sprintf("./mesh/box_%dacc.mat", i)];
     end
     meshfiles_qfive = [];
@@ -15,8 +15,7 @@ function problems = tests(meshfiles, meshfiles_qfive)
     p2 = Problem().init_problem("qfive_spot", @qfive_spot, meshfiles_qfive);
     p3 = Problem().init_problem("extra_case1", @extra_case1, meshfiles);
     p4 = Problem().init_problem("extra_case2", @extra_case2, meshfiles);
-    p5 = Problem().init_problem("quadratic_case", @quadratic_case, meshfiles);
-    problems = [p1, p2, p3, p4, p5];
+    problems = [p1, p2, p3, p4];
     
     nrepeats = 5;
     for i = 1:length(problems)
@@ -27,11 +26,11 @@ function problems = tests(meshfiles, meshfiles_qfive)
             for j = 1:nrepeats
                 if problems(i).name ~= "qfive_spot"
                     solver = problems(i).handle(mesh);
+                    solver_name = solver.name;
                 else
                     solver = problems(i).handle(mesh, [6, 4, 1]);
                 end
-                solver_name = solver.name;
-                sprintf("Finished %d/%d of %d/%d in %s", j, nrepeats, k, length(problems(i).meshfiles), solver.name)
+                sprintf("Finished %d/%d of %d/%d", j, nrepeats, i, 
                 problems(i) = problems(i).add_to_problem(k, j, solver.mesh.nvols, solver.error, solver.times, solver.memory);
             end
             k = k + 1;
@@ -52,15 +51,12 @@ function arr = convert_to_arrays(cell_of_dict)
     for i = 1:length(cell_of_dict)
         d = [];
         a = cell_of_dict{i};
-        a("TPFA System Preparation") = a("TPFA System Preparation") + ...
-                                       a("TPFA Boundary Conditions") + ...
-                                       a("Post-Processing*");
+        a("TPFA System Preparation") = a("TPFA System Preparation") +  a("TPFA Boundary Conditions");
         a("TPFA Boundary Conditions") = [];
-        a("Post-Processing*") = [];
         for key = a.keys
             d = [d, a(key)];
         end
-        d = [d ; sum(d)];
+        a("Total") = sum(d);
         arr(i, :) = d;
     end
 end
@@ -228,7 +224,7 @@ function solver = qfive_spot(mesh, box_dimensions)
     zv = mesh.volumes_centers(:, 3);
     an = analytical(xv, yv, zv).';
     keys = ["check", "name", "mesh", "permeability", "dirichlet", "neumann", "analytical", "source"];
-    vals = {true, "1/4 de Five-Spot", mesh, permeability, @dirichlet, @neumann, an, @source};
+    vals = {true, "QFiveSpot", mesh, permeability, @dirichlet, @neumann, an, @source};
     args = dictionary(keys, vals);
     solver = Solver();
     solver = solver.solve_TPFA(args);

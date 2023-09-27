@@ -6,7 +6,7 @@ import sys
 import time
 
 import helpers
-
+import pypardiso
 
 counter = 0
 # Subindo o caminho para o diretório pai, para importar o módulo
@@ -14,10 +14,9 @@ sys.path.append('../')
 
 from preprocessor.meshHandle.finescaleMesh import FineScaleMesh                     # type: ignore 
 from scipy.sparse import csr_matrix
-from scipy.sparse.linalg import spsolve
-from pypardiso import spsolve as pypardiso_spsolve
+from scipy.sparse.linalg import spsolve,cg
 from numba import njit
-
+from objsize import get_deep_size
 class TPFAsolver:
     def __init__(self, verbose = True, check : bool = True, name: str = "MESH", fast_solver : bool = True) -> None:
 
@@ -31,6 +30,7 @@ class TPFAsolver:
         self.verbose        = verbose                                               # Flag para verbose mode    (bool)
         self.check          = check                                                 # Flag para check mode      (bool)
         self.fast_solver    = fast_solver                                           # Flag para fast solver     (bool)
+        self.iterative      = False                                                 # Flag para solver iterativo(bool)
         np.set_printoptions(precision = 4)
         global counter
         if name == "MESH":
@@ -41,6 +41,7 @@ class TPFAsolver:
 
         # Utilidades-----------------------------------------------------------------------------------------------#
         self.times                  = {}                                            # Dicionário para os tempos (dict)
+        self.memory                 = None                                          # Tamanho (bytes) do solver (int)
         self.mesh                   = None                                          # Malha                     (FineScaleMesh)                           
         self.dim                    = None                                          # Dimensão da malha         (int)
 
@@ -286,6 +287,7 @@ class TPFAsolver:
         }
         if self.verbose:
             self.__verbose(full_step_name)
+        self.memory = get_deep_size(self)
         return results
 
     def pre_process(self, meshfile: str = None, mesh_params : tuple = None, mesh : FineScaleMesh = None, dim : int = 3) -> tuple:
@@ -783,10 +785,16 @@ class TPFAsolver:
         if self.bn_TPFA is not None:
             b += self.bn_TPFA
         A.eliminate_zeros()
-        if self.fast_solver:
-            self.p_TPFA = pypardiso_spsolve(A, b)
+        if self.iterative:
+            #self.p_TPFA, info = cg(A, b, maxiter = 10000, tol = 1e-10)
+            #msg = "Success!" if info == 0 else "Convengence not achieved!" if info > 0 else "Illegal input or breakdown!" 
+            #helpers.verbose(msg, "INFO")
+            pass
+        elif self.fast_solver:
+            self.p_TPFA = pypardiso.spsolve(A, b)
         else:
             self.p_TPFA = spsolve(A, b) 
+            pass
         if self.check:
             assert np.allclose(A.dot(self.p_TPFA), b), "Solução do sistema TPFA não satisfaz a equação"
             assert self.__check_conservative(), "Solução do sistema TPFA não conserva o fluxo" 
@@ -840,6 +848,7 @@ class TPFAsolver:
 def main():
     directory = "mesh"
     # Open the mesh directory and run the solver for each mesh file
+    
     solver = TPFAsolver(verbose=True)
     for meshfile in os.listdir(directory):
         mesh_name = meshfile.split(".")[0]

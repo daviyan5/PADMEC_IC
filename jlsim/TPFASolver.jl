@@ -1,4 +1,7 @@
 module TPFASolver
+import LinearAlgebra as LA
+using MKL
+using Pardiso
 
 # include("Helpers.jl")     # Only if called directly
 # include("MeshHandler.jl") # Only if called directly
@@ -6,7 +9,8 @@ module TPFASolver
 import ..MeshHandler
 import ..Helpers
 
-import LinearAlgebra as LA
+import Pardiso as PS
+
 import TimerOutputs as TO
 import LinearSolve as LS
 
@@ -33,7 +37,6 @@ mutable struct Solver
     verbose         :: Bool                                             # Verbose mode
     check           :: Bool                                             # Flag for checking if solution is valid
     name            :: String                                           # Name of the solver
-    times           :: DictNull                                         # Dict for storing times
     mesh            :: MeshNull                                         # Mesh object
 
     permeability    :: Union{Vector{SMatrix{3, 3, Float64}}, Nothing}   # Permeability tensor flattened
@@ -42,6 +45,10 @@ mutable struct Solver
 
     h_L             :: FloatVectorNull                                  # Distance from face_centers to left volume
     h_R             :: FloatVectorNull                                  # Distance from face_centers to right volume
+
+    row_index       :: IntVectorNull                                    # Row index of the TPFA matrix
+    col_index       :: IntVectorNull                                    # Column index of the TPFA matrix
+    data            :: FloatVectorNull                                  # Data of the TPFA matrix
 
     At_TPFA         :: SparseMatrixNull                                 # Transmissibility matrix
     bt_TPFA         :: FloatVectorNull                                  # Source term
@@ -65,16 +72,22 @@ mutable struct Solver
     bench_info      :: TimerOutputNull                                  # Object with times and memories
     vtk_filename    :: StringNull                                       # Name of the vtk file to be written
     error           :: FloatNull                                        # Error of the solution
+
+    times           :: DictNull
+    memory          :: FloatNull
+
     function Solver(verbose::Bool = true, check::Bool = false, name::String = "MESH")
-        new(verbose, check, name, nothing, nothing, # verbose, check, name, times, mesh,
+        new(verbose, check, name, nothing,          # verbose, check, name, mesh,
             nothing, nothing, nothing,              # permeability, faces_normals, faces_trans
             nothing, nothing,                       # h_L, h_R
+            nothing, nothing, nothing,              # row_index, col_index, data
             nothing, nothing, nothing,              # At_TPFA, bt_TPFA, p_TPFA
             nothing, nothing, nothing,              # irel, numerical_p, analytical_p
             nothing, nothing,                       # faces_with_bc, volumes_with_bc
             nothing, nothing, nothing,              # d_faces, d_values, d_volumes
             nothing, nothing, nothing,              # n_faces, n_values, n_volumes
-            nothing, nothing, nothing)              # bench_info, vtk_filename, error
+            nothing, nothing, nothing,              # bench_info, vtk_filename, error
+            nothing, nothing)                       # times, memory
     end
 
 end
@@ -90,14 +103,14 @@ function Base.show(io :: IO, m :: Solver)
     print(io, "Error: \t $(m.error)")
 end
 function get_times_keys() :: Vector{String}
-    return ["TPFA Pre-Processing", "TPFA System Preparation", "TPFA Boundary Conditions", "TPFA Solver"]
+    return ["Pre-Processing", "TPFA System Preparation", "TPFA Boundary Conditions", "TPFA System Solving"]
 end
-function solve_TPFA!(solver :: Solver, args :: Dict) 
-    solver.bench_info = TO.TimerOutput("TPFA Solver - $(solver.name)")
+function solve_TPFA!(solver :: Solver, args :: Dict)
+    solver.bench_info = TO.TimerOutput("TPFA System Solving - $(solver.name)")
     # Helpers.reset_verbose()
     Helpers.verbose("== Applying TPFA Scheme over $(solver.name)...", "OUT", solver.verbose)
 
-    step_name :: String = "TPFA Pre-Processing"
+    step_name :: String = "Pre-Processing"
     @TO.timeit solver.bench_info step_name begin
 
     solver.mesh = args["mesh"]
@@ -111,10 +124,12 @@ function solve_TPFA!(solver :: Solver, args :: Dict)
 
     step_name = "TPFA System Preparation"
     @TO.timeit solver.bench_info step_name begin
-
+    @TO.timeit solver.bench_info "TPFA System Preparation - Assemble Transmissibilities" begin
     __assemble_faces_transmissibilities!(solver)
+    end # Assemble Transmissibilities
+    @TO.timeit solver.bench_info "TPFA System Preparation - Assemble TPFA Matrix" begin
     __assemble_TPFA_matrix!(solver, args["source"])
-
+    end # Assemble TPFA Matrix
     end # TPFA System Preparation
     __verbose(solver, step_name, solver.verbose)
 
@@ -128,7 +143,7 @@ function solve_TPFA!(solver :: Solver, args :: Dict)
     end # TPFA Boundary Conditions
     __verbose(solver, step_name, solver.verbose)
 
-    step_name = "TPFA Solver"
+    step_name = "TPFA System Solving"
     @TO.timeit solver.bench_info step_name begin
 
     __solve_TPFA_system!(solver)
@@ -136,24 +151,32 @@ function solve_TPFA!(solver :: Solver, args :: Dict)
         Helpers.verbose("TPFA Solution is consistent!", "CHK", solver.verbose)
     end
 
-    end # TPFA Solver
+    end # TPFA System Solving
     __verbose(solver, step_name, solver.verbose)
 
-    step_name = "TPFA Post-Processing"
+    step_name = "Post-Processing"
     @TO.timeit solver.bench_info step_name begin
 
     solver.analytical_p = haskey(args, "analytical") ? args["analytical"] : nothing
     __get_error!(solver)
     __post_process!(solver, haskey(args, "vtk") ? args["vtk"] : false)
 
+    solver.times = Dict()
+    for key in get_times_keys()
+        solver.times[key] = 0.0
+        solver.times[key] += TO.time(solver.bench_info[key]) / 1e9
+    end
+    solver.times["Total Time"] = TO.tottime(solver.bench_info) / 1e9
+    solver.memory = TO.totallocated(solver.bench_info) / 1e6
     end # Post-Process
     __verbose(solver, step_name, solver.verbose)
+    #TO.complement!(solver.bench_info)
 end
 
 function __verbose(solver :: Solver, step_name :: String, verbose :: Bool)
     """
-    Steps = "TPFA Pre-Processing","TPFA System Preparation", 
-            "TPFA Boundary Conditions", "TPFA Solver", "TPFA Post-Processing" 
+    Steps = "Pre-Processing","TPFA System Preparation", 
+            "TPFA Boundary Conditions", "TPFA System Solving", "Post-Processing" 
     """
     if verbose == false
         return
@@ -163,9 +186,11 @@ function __verbose(solver :: Solver, step_name :: String, verbose :: Bool)
     end 
     time = TO.time(solver.bench_info[step_name]) / 1e9
     time = round(time, digits = 5)
+    memory = TO.allocated(solver.bench_info[step_name]) / 1e6
     Helpers.verbose("== Done with $(step_name)", "OUT")
-    Helpers.verbose("Time for step '$(step_name)': $(time) s", "OUT")
-    if step_name == "TPFA Pre-Processing"
+    Helpers.verbose("Time for step '$(step_name)': $(time) s", "INFO")
+    Helpers.verbose("Allocated memory for step '$(step_name)': $(memory) MBytes", "INFO")
+    if step_name == "Pre-Processing"
         Helpers.verbose("Nº of volumes: $(solver.mesh.nvols)", "INFO")
         Helpers.verbose("Average volume: $(avg(solver.mesh.volumes))", "INFO")
         Helpers.verbose("Nº of faces: $(solver.mesh.nfaces)", "INFO")
@@ -209,7 +234,7 @@ function __verbose(solver :: Solver, step_name :: String, verbose :: Bool)
             Helpers.verbose("No Neumann BC", "INFO")
         end
 
-    elseif step_name == "TPFA Solver"
+    elseif step_name == "TPFA System Solving"
         mx, argmx = findmax(solver.p_TPFA)
         mn, argmn = findmin(solver.p_TPFA)
         mx, mn = round(mx, digits = 5), round(mn, digits = 5)
@@ -220,7 +245,7 @@ function __verbose(solver :: Solver, step_name :: String, verbose :: Bool)
         Helpers.verbose("Machine Epsilon: $(eps())", "INFO")
 
         
-    elseif step_name == "TPFA Post-Processing"
+    elseif step_name == "Post-Processing"
         Helpers.verbose("VTK Filename = $(solver.vtk_filename)", "INFO")
         if solver.analytical_p !== nothing
             mx, argmx = findmax(solver.analytical_p)
@@ -264,7 +289,8 @@ function __get_normals(solver :: Solver) :: Tuple
     nvols_pairs = size(volumes_pairs)[1]
     nvols = size(volumes_pairs[1])[1]
 
-    volumes_centers = reshape(solver.mesh.volumes_centers[[(volumes_pairs...)...]], 
+    volumes_centers_flat :: Vector{SVector} = solver.mesh.volumes_centers[[(volumes_pairs...)...]]
+    volumes_centers :: Matrix{SVector} = reshape(volumes_centers_flat, 
                              (nvols, nvols_pairs))
     faces_centers   = solver.mesh.faces_centers[internal_faces]
 
@@ -286,7 +312,6 @@ function __assemble_faces_transmissibilities!(solver :: Solver)
     """
     Monta os vetores de transmissibilidade de cada face e os vetores de distancias
     """
-
     N, vL, vR = __get_normals(solver)
     solver.faces_normals = Helpers.abs_b.(N) ./ LA.norm.(N)
 
@@ -305,28 +330,36 @@ function __assemble_faces_transmissibilities!(solver :: Solver)
 
     Keq = (KnL .* KnR) ./ ((KnL .* solver.h_R) + (KnR .* solver.h_L))
     solver.faces_trans = Keq .* solver.mesh.faces_areas[solver.mesh.internal_faces]
+
 end
 
 function __assemble_TPFA_matrix!(solver :: Solver, source :: Function)
     row_index_p = Helpers.get_column.(solver.mesh.internal_faces_adj, 1)
     col_index_p = Helpers.get_column.(solver.mesh.internal_faces_adj, 2)
     
-    row_index   = [row_index_p..., col_index_p...]
-    col_index   = [col_index_p..., row_index_p...]
-    data        = [solver.faces_trans..., solver.faces_trans...] .* -1.0
-
-    solver.At_TPFA = SparseArrays.sparse(row_index, col_index, data)
+    diags = [1:solver.mesh.nvols]
+    solver.row_index   = [row_index_p..., col_index_p..., (diags...)...]
+    solver.col_index   = [col_index_p..., row_index_p..., (diags...)...]
+    solver.data        = [solver.faces_trans..., solver.faces_trans..., (zeros(solver.mesh.nvols))...] .* -1.0
+    lines_sum          = zeros(solver.mesh.nvols)
+    
+    lv = @view lines_sum[solver.row_index]
+    lv .+= solver.data
+    diag_index = findall(solver.row_index .== solver.col_index)
+    diag_vals  = solver.row_index[diag_index]
+    solver.data[diag_index] .= -lines_sum[diag_vals]
 
     xv = Helpers.get_column.(solver.mesh.volumes_centers, 1)
     yv = Helpers.get_column.(solver.mesh.volumes_centers, 2)
     zv = Helpers.get_column.(solver.mesh.volumes_centers, 3)
 
     solver.bt_TPFA = source(xv, yv, zv, solver.permeability) .* solver.mesh.volumes
-    v = vec(sum(solver.At_TPFA, dims = 1))
-    solver.At_TPFA = (solver.At_TPFA - LA.Diagonal(solver.At_TPFA)) - LA.Diagonal(v)
-
+    
     if solver.check
-        @assert all(vec(sum(solver.At_TPFA, dims = 1)) .< 1e-10)
+        new_lines_sum = zeros(solver.mesh.nvols)
+        new_lv = @view new_lines_sum[solver.row_index]
+        new_lv .+= solver.data[solver.row_index]
+        @assert all(new_lv .< 1e-10)
     end
     
 end
@@ -344,17 +377,16 @@ function __set_dirichlet_boundary_conditions!(solver :: Solver, dirichlet :: Fun
     d_volumes = d_volumes[mask]
     d_values  = d_values[mask]
     solver.volumes_with_bc = vcat(solver.volumes_with_bc, setdiff(d_volumes, solver.volumes_with_bc))
+    
     @assert length(d_volumes) > 1 "There is no Dirichlet boundary condition"
 
-
-    
     solver.bt_TPFA[d_volumes] = d_values
-    solver.At_TPFA[d_volumes, :] .= 0.0
-    v = zeros(solver.mesh.nvols)
-    v[d_volumes] .= 1.0
-    solver.At_TPFA = solver.At_TPFA + LA.Diagonal(v)
-    dropzeros!(solver.At_TPFA)
 
+    bool_idx = indexin(solver.row_index, d_volumes) .!== nothing
+    d_index = findall(bool_idx)
+    solver.data[d_index] .= 0.0
+    diag_index = findall((solver.row_index .== solver.col_index) .&& (bool_idx))
+    solver.data[diag_index] .= 1.0
     solver.d_volumes = d_volumes
     solver.d_values  = d_values
 
@@ -386,10 +418,15 @@ function __set_neumann_boundary_conditions!(solver :: Solver, neumann :: Functio
 end
 
 function __solve_TPFA_system!(solver :: Solver)
-    dropzeros!(solver.At_TPFA)
+    
+    solver.At_TPFA = SparseArrays.sparse(solver.row_index, solver.col_index, solver.data, 
+                                         solver.mesh.nvols, solver.mesh.nvols)
+    
+    solver.p_TPFA = zeros(length(solver.bt_TPFA))
+    #PS.solve!(ps, solver.p_TPFA, solver.At_TPFA, solver.bt_TPFA)
     prob = LS.LinearProblem(solver.At_TPFA, solver.bt_TPFA)
     #solver.p_TPFA = solver.At_TPFA \ solver.bt_TPFA
-    solver.p_TPFA = LS.solve(prob, LS.UMFPACKFactorization())
+    solver.p_TPFA = LS.solve(prob, LS.MKLPardisoFactorize())
     if solver.check
         @assert solver.At_TPFA * solver.p_TPFA ≈ solver.bt_TPFA
     end

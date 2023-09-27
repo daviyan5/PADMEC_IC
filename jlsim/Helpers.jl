@@ -5,9 +5,68 @@ include("MeshGenerator.jl")
 
 import .MeshGenerator
 import LinearAlgebra as LA
-
 using StaticArrays
 
+
+mutable struct Problem
+    name :: String
+    handle :: Function
+    meshfiles :: Vector{String}
+    nvols_arr :: Vector{Int64}
+    avg_error_arr :: Vector{Float64}
+    avg_time_arr :: Vector{Dict{String, Float64}}
+    avg_memory_arr :: Vector{Float64}
+
+    function Problem(name :: String, handle :: Function, meshfiles :: Vector{String})
+        this = new()
+        this.name           = name
+        this.handle         = handle
+        this.meshfiles      = meshfiles
+        this.nvols_arr      = zeros(length(meshfiles))
+        this.avg_error_arr  = zeros(length(meshfiles))
+
+        basic = Dict()
+        keys = [
+              "Total Time", 
+              "Pre-Processing", 
+              "TPFA System Preparation", 
+              "TPFA Boundary Conditions", 
+              "TPFA System Solving", 
+              "Post-Processing" 
+              ] 
+        for key in keys
+            basic[key] = 0.0
+        end
+        this.avg_time_arr   = [copy(basic) for i in 1:length(meshfiles)]
+        this.avg_memory_arr = zeros(length(meshfiles))
+        return this
+    end
+    
+end
+
+function add_to_problem!(problem :: Problem, i :: Int64, j :: Int64, nvols :: Int64, error :: Float64, time :: Dict, memory :: Float64)
+    if i > length(problem.meshfiles)
+        error("Index out of bounds for Problem")
+    end
+    problem.nvols_arr[i] = copy(nvols)
+    if j > 1 && problem.avg_error_arr[i] / error <= 1e-3
+        Helpers.verbose("Error: $(error) >> $(problem.avg_error_arr[i])", "INFO", true)
+    else
+        problem.avg_error_arr[i] = problem.avg_error_arr[i] * (j-1) / j + error / j
+    end
+    for key in keys(time)
+        if j > 1 && problem.avg_time_arr[i][key] / time[key] <= 1e-3
+            Helpers.verbose("Time: $(time[key]) >> $(problem.avg_time_arr[i][key])", "INFO", true)
+        else
+            problem.avg_time_arr[i][key] = problem.avg_time_arr[i][key] * (j-1) / j + time[key] / j
+        end
+    end
+    if j > 1 && problem.avg_memory_arr[i] / memory <= 1e-3
+        Helpers.verbose("Memory: $(memory) >> $(problem.avg_memory_arr[i])", "INFO", true)
+    else
+        problem.avg_memory_arr[i] = problem.avg_memory_arr[i] * (j-1) / j + memory / j
+    end
+end
 # ----------- Print Helpers --------------------------------#
 mutable struct IdxIter
     current :: Int64
@@ -50,7 +109,9 @@ function verbose(msg :: String, type :: String, verbose :: Bool = true)
 end
 
 # ----------------------------------------------------------#
-
+function memuse()
+    return parse(Int, split(read(`ps -p $(getpid()) -o rss`, String))[2]) / 1024
+end
 function get_random_tensor(a :: Number, b :: Number, sz :: Int64, n :: Int64 = 3, m :: Int64 = 3, only_diagonal :: Bool = false) :: Vector
     """
     Retorna um array de tamanho size cujos elementos são tensores aleatórios n x m, com valores entre a e b
@@ -95,23 +156,24 @@ function abs_b(v :: Vector) :: Vector
 end
 end # module Helpers
 
+is_tests = false
+if is_tests == true
+    import .Helpers
 
-import .Helpers
+    function testing()
+        Helpers.verbose("Testing", "OUT", true)
+        Helpers.verbose("Testing", "CHK", true)
+        Helpers.verbose("Testing", "INFO", true)
+        name = "mesh"
+        Helpers.verbose("== Applying TPFA Scheme over $(name)...", "OUT", true)
 
-function testing()
-    Helpers.verbose("Testing", "OUT", true)
-    Helpers.verbose("Testing", "CHK", true)
-    Helpers.verbose("Testing", "INFO", true)
-    name = "mesh"
-    Helpers.verbose("== Applying TPFA Scheme over $(name)...", "OUT", true)
-
-    a = Helpers.get_tensor(1, 10, 3, 3, false)
-    b = Helpers.get_random_tensor(10, 11, 11,  3, 3, true)
-    show(a[1])
-    println()
-    show(b[1])
-    println()
-    
+        a = Helpers.get_tensor(1, 10, 3, 3, false)
+        b = Helpers.get_random_tensor(10, 11, 11,  3, 3, true)
+        show(a[1])
+        println()
+        show(b[1])
+        println()
+        
+    end
+    testing()
 end
-
-#testing()

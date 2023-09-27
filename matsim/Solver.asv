@@ -32,8 +32,9 @@ classdef Solver
         n_faces          % Faces with Neumann boundary conditions
         nvalues          % Values of Neumann boundary conditions
         nvolumes         % Volumes with Neumann boundary conditions
-        
-        memory           % Memory estimation
+
+        bench_info       % Object with times and memories
+        vtk_filename     % Name of the vtk file to be written
         error            % Error of the solution
     end
 
@@ -44,44 +45,40 @@ classdef Solver
             solver.name  = args{"name"};
 
             step_name = 'Pre-Processing*';
-            tic;
+            tic
                 solver.mesh = args{"mesh"};
                 solver.permeability = args{"permeability"};
-            toc;
+            toc
             solver.times(step_name) = toc;
             
             step_name = 'TPFA System Preparation';
-            tic;
+            tic
                 solver = solver.assemble_faces_transmissibilities();
                 solver = solver.assemble_TPFA_matrix(args{"source"});
-            toc;
+            toc
             solver.times(step_name) = toc;
             
             step_name = 'TPFA Boundary Conditions';
-            tic;
+            tic
                 solver = solver.set_dirichlet_boundary_conditions(args{"dirichlet"});
                 solver = solver.set_neumann_boundary_conditions(args{"neumann"});
-            toc;
+            toc
             solver.times(step_name) = toc;
 
             step_name = 'TPFA Solver';
-            tic;
+            tic
                 solver = solver.solve_TPFA_system();
-            toc;
+            toc
             solver.times(step_name) = toc;
 
             step_name = 'Post-Processing*';
-            tic;
+            tic
                 solver.analytical_p = args{"analytical"};
                 solver.numerical_p  = solver.p_TPFA;
-                num = ((solver.analytical_p - solver.p_TPFA) .^ 2) .* solver.mesh.volumes.';
-                den = ((solver.analytical_p) .^ 2) .* solver.mesh.volumes.';
-                solver.irel = sqrt(num ./ den);
-                solver.error = sqrt(sum(num) / sum(den));
-            toc;
+                solver = solver.post_processing();
+            toc
             solver.times(step_name) = toc;
-            solver.memory = whos("solver").bytes;
-            solver = solver.post_processing();
+            return;
         end
         function NvLvR = get_normals(solver)
             volumes_pairs   = solver.mesh.internal_faces_adj;
@@ -207,11 +204,14 @@ classdef Solver
             end
         end
         function solver = post_processing(solver)
-            %nvols = solver.mesh.nvols;
-            %error = solver.error;
-            %times = solver.times;
-            %memory = solver.memory;
-            %save(sprintf("./vtks/solver_%d_%s.mat", solver.mesh.nvols, solver.name), "nvols", "error", "times", "memory");
+            num = ((solver.analytical_p - solver.p_TPFA) .^ 2) .* solver.mesh.volumes.';
+            den = ((solver.analytical_p) .^ 2) .* solver.mesh.volumes.';
+            solver.irel = sqrt(num ./ den);
+            solver.error = sqrt(sum(num) / sum(den));
+            nv = solver.mesh.nvols;
+            er = solver.error;
+            tm = solver.times;
+            save(sprintf("./vtks/solver_%d_%s.mat", solver.mesh.nvols, solver.name), "nv", "er", "tm");
         end
     end
 end

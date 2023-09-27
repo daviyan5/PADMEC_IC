@@ -1,3 +1,6 @@
+import LinearAlgebra as LA
+using MKL
+
 include("Helpers.jl")
 include("MeshHandler.jl")
 include("TPFASolver.jl")
@@ -8,9 +11,14 @@ import .TPFASolver
 
 import JLD2
 import DelimitedFiles as DF
-import LinearAlgebra as LA
 import TimerOutputs as TO
+import BenchmarkTools as BT
+import StatsBase as SB
+
 using PyCall
+using Profile
+using PProf
+
 @pyinclude("plots.py")
 
 function linear_case(mesh :: MeshHandler.Mesh, verbose :: Bool = false) :: TPFASolver.Solver
@@ -37,12 +45,13 @@ function linear_case(mesh :: MeshHandler.Mesh, verbose :: Bool = false) :: TPFAS
                 "source"        => source,
                 "permeability"  => permeability,
                 "analytical"    => dirichlet(xv, yv, zv, idx, mesh),
-                "vtk" => false)
+                "vtk"           => false)
     TPFASolver.solve_TPFA!(solver, args)
-    TPFASolver.solve_TPFA!(solver, args)
-    Helpers.verbose("For $(solver.name):", "OUT")
-    show(solver)
-    println()
+    if verbose == true
+        Helpers.verbose("For $(solver.name):", "OUT")
+        show(solver)
+        println()
+    end
     return solver
 end
 
@@ -70,12 +79,13 @@ function quadratic_case(mesh :: MeshHandler.Mesh, verbose :: Bool = false) :: TP
                 "source"        => source,
                 "permeability"  => permeability,
                 "analytical"    => dirichlet(xv, yv, zv, idx, mesh),
-                "vtk" => false)
+                "vtk"           => false)
     TPFASolver.solve_TPFA!(solver, args)
-    TPFASolver.solve_TPFA!(solver, args)
-    Helpers.verbose("For $(solver.name):", "OUT")
-    show(solver)
-    println()
+    if verbose == true
+        Helpers.verbose("For $(solver.name):", "OUT")
+        show(solver)
+        println()
+    end
     return solver
 end
 
@@ -103,12 +113,13 @@ function extra_case1(mesh :: MeshHandler.Mesh, verbose :: Bool = false) :: TPFAS
                 "source"        => source,
                 "permeability"  => permeability,
                 "analytical"    => dirichlet(xv, yv, zv, idx, mesh),
-                "vtk" => true)
+                "vtk"           => false)
     TPFASolver.solve_TPFA!(solver, args)
-    TPFASolver.solve_TPFA!(solver, args)
-    Helpers.verbose("For $(solver.name):", "OUT")
-    show(solver)
-    println()
+    if verbose == true
+        Helpers.verbose("For $(solver.name):", "OUT")
+        show(solver)
+        println()
+    end
     return solver
 end
 
@@ -136,17 +147,18 @@ function extra_case2(mesh :: MeshHandler.Mesh, verbose :: Bool = false) :: TPFAS
                 "source"        => source,
                 "permeability"  => permeability,
                 "analytical"    => dirichlet(xv, yv, zv, idx, mesh),
-                "vtk" => false)
+                "vtk"           => false)
     TPFASolver.solve_TPFA!(solver, args)
-    TPFASolver.solve_TPFA!(solver, args)
-    Helpers.verbose("For $(solver.name):", "OUT")
-    show(solver)
-    println()
+    if verbose == true
+        Helpers.verbose("For $(solver.name):", "OUT")
+        show(solver)
+        println()
+    end
     return solver
     
 end
 
-function QFiveSpot_case(mesh :: MeshHandler.Mesh, box_dimensions :: Tuple = (1, 1, 1), verbose :: Bool = false) :: TPFASolver.Solver
+function qfive_spot(mesh :: MeshHandler.Mesh, box_dimensions :: Tuple = (1, 1, 1), verbose :: Bool = false) :: TPFASolver.Solver
     
     Lx, Ly, Lz = box_dimensions
     d1 = 10000.
@@ -179,29 +191,28 @@ function QFiveSpot_case(mesh :: MeshHandler.Mesh, box_dimensions :: Tuple = (1, 
         return ones(length(x)) .* vq
     end
     function analytical(x :: Vector, y :: Vector, z :: Vector) :: Vector
-        ref = DF.readdlm("vtks/QFiveSpotRef.txt", ',')
+        ref = DF.readdlm("vtks/qfive_spot_ref.txt", ',')
         xr  = ref[:, 1]
         yr  = ref[:, 2]
+        zr  = ref[:, 3] 
         pr  = ref[:, 4]
-        n   = Integer(sqrt(length(x)))
+        
+        n   = Integer(round(sqrt(length(x))))
         dx  = Lx / n
         dy  = Ly / n
         i = ceil.(Int64, yr ./ dy)
         j = ceil.(Int64, xr ./ dx)
-        idx = (i .- 1) .* n .+ j
+        idx = ((i .- 1) .* n) .+ j
         a_p = zeros(n * n)
-        freq = zeros(n * n)
-        for i in 1:size(idx)[1]
-            a_p[idx[i]] += pr[i]
-            freq[idx[i]] += 1
-        end
-        m = freq[1]
+        a_pv = @view a_p[idx]
+        a_pv .+= pr
+        m = length(idx) / length(unique(idx))
         return a_p ./ m
 
     end
 
     permeability = Helpers.get_tensor(k1, mesh.nvols, 3, 3, true)
-    solver = TPFASolver.Solver(verbose, true, "QFiveSpot")
+    solver = TPFASolver.Solver(verbose, true, "1/4 de Five-Spot")
     xv, yv, zv, idx = Helpers.get_column.(mesh.volumes_centers, 1), 
                       Helpers.get_column.(mesh.volumes_centers, 2), 
                       Helpers.get_column.(mesh.volumes_centers, 3), 
@@ -218,167 +229,38 @@ function QFiveSpot_case(mesh :: MeshHandler.Mesh, box_dimensions :: Tuple = (1, 
 
     TPFASolver.solve_TPFA!(solver, args)
 
-    Helpers.verbose("For $(solver.name):", "OUT")
-    show(solver)
-    println()
+    if verbose == true
+        Helpers.verbose("For $(solver.name):", "OUT")
+        show(solver)
+        println()
+    end
     return solver
     
 end
 
-function run_tests(meshfiles :: Array, meshfiles_QFiveSpot :: Array, try_precompile :: Bool = true)
-    if try_precompile
-        meshfile = "./mesh/cube_hex.msh"
-        aux_solver = linear_case(MeshHandler.Mesh(meshfile))
-    end
-    function general_test(meshfiles :: Array, test_functions :: Array{Function}, add_to_solver :: Function, 
-                          n_tests :: Int64, n_reps :: Int64, res :: Dict, vols :: Array, verbose :: Bool = false, type = "GNR",
-                          meshfiles_QFiveSpot :: Array = [], volsQFiveSpot :: Array = [])
-        for (i, (meshfile, box_dimensions)) in enumerate(meshfiles)
-            if i > n_tests
-                break
-            end
-            mesh = MeshHandler.Mesh(meshfile)
-            meshQFiveSpot = i <= length(meshfiles_QFiveSpot) ? MeshHandler.Mesh(meshfiles_QFiveSpot[i][1]) : nothing
-            if i <= length(meshfiles_QFiveSpot)
-                append!(volsQFiveSpot, meshQFiveSpot.nvols)
-            end
-            append!(vols, mesh.nvols)
-            
-            for j in 1:n_reps
-                Helpers.verbose("Starting $(type) test [$(i)/$(n_tests), $(j)/$(n_reps)] for $(mesh.nvols)", "OUT")
-                for f in test_functions
-                    if f == QFiveSpot_case && meshQFiveSpot !== nothing
-                        solver = f(meshQFiveSpot, meshfiles_QFiveSpot[i][2])
-                        add_to_solver(solver, i, j, res)
-                    elseif f != QFiveSpot_case
-                        solver = f(mesh)
-                        add_to_solver(solver, i, j, res)
-                    end
-                    
-                end
-                GC.gc()
-            end
-        end
-    end
-    function run_accuracy(meshfiles :: Array, n_tests :: Int64, n_reps :: Int64)
-        n_tests = min(n_tests, length(meshfiles))
-        println("Running accuracy tests")
-        n_mesh = length(meshfiles)
-        acc = Dict{String, Matrix{Float64}}()
-        test_functions = [quadratic_case, QFiveSpot_case, extra_case1, extra_case2] #[linear_case, quadratic_case, QFiveSpot_case, extra_case2]
-        vols = []
-        volsQFiveSpot = []
-        function add_to_solver(solver :: TPFASolver.Solver, i :: Int64, j :: Int64, res :: Dict)
-            name = solver.name
-            if haskey(res, name)
-                res[name][i, j] = solver.error
-            else
-                res[name] = zeros(Float64, n_tests, n_reps)
-                res[name][i, j] = solver.error
-            end
-        end
-        general_test(meshfiles, test_functions, add_to_solver, n_tests, n_reps, acc, vols, false, "ACC", meshfiles_QFiveSpot, volsQFiveSpot)
-        Helpers.verbose("Done with accuracy tests", "OUT")
-        Helpers.verbose("=", "OUT")
-        for (name, matrix) in acc
-            println("For $(name):")
-            display(matrix)
-            println()
-        end
-        py"plot_accuracy"(acc, vols, volsQFiveSpot)
-    end
-
-    function run_times(meshfiles :: Array, n_tests :: Int64, n_reps :: Int64)
-        n_tests = min(n_tests, length(meshfiles))
-        println("Running time tests")
-        n_mesh = length(meshfiles)
-
-        times = Dict{String, Dict{String, Matrix{Float64}}}()
-        vols = []
-        volsQFiveSpot = []
-        test_functions = [linear_case, quadratic_case, QFiveSpot_case]
-
-        function add_to_solver(solver :: TPFASolver.Solver, i :: Int64, j :: Int64, res :: Dict)
-            name = solver.name
-            if haskey(res, name)
-                for key in TPFASolver.get_times_keys()
-                    n_key = key[6:end]
-                    if n_key == "Boundary Conditions"
-                        n_key = "System Preparation"
-                    end
-                    res[name][n_key][i, j] += TO.time(solver.bench_info[key]) / 1e9
-                end
-                res[name]["Total Time"][i, j] += TO.tottime(solver.bench_info) / 1e9
-            else
-                res[name] = Dict{String, Matrix{Float64}}()
-                for key in TPFASolver.get_times_keys()
-                    n_key = key[6:end]
-                    if n_key == "Boundary Conditions"
-                        n_key = "System Preparation"
-                    end
-                    res[name][n_key] = zeros(Float64, n_tests, n_reps)
-                    res[name][n_key][i, j] += TO.time(solver.bench_info[key]) / 1e9
-                end
-                res[name]["Total Time"] = zeros(Float64, n_tests, n_reps)
-                res[name]["Total Time"][i, j] += TO.tottime(solver.bench_info) / 1e9
-            end
-        end
-        general_test(meshfiles, test_functions, add_to_solver, n_tests, n_reps, times, vols,  false, "TIME", meshfiles_QFiveSpot, volsQFiveSpot)
-        Helpers.verbose("Done with times tests", "OUT")
-        Helpers.verbose("=", "OUT")
-        for (name, dict) in times
-            println("For $(name):")
-            for (key, matrix) in dict
-                println("For $(key):")
-                display(matrix)
-            end
-            println()
-        end
-        py"plot_times"(times, vols, volsQFiveSpot)
-        
-    end
-
-    function run_memory(meshfiles :: Array, n_tests :: Int64, n_reps :: Int64)
-        n_tests = min(n_tests, length(meshfiles))
-        println("Running time tests")
-        n_mesh = length(meshfiles)
-
-        mem = Dict{String, Matrix{Float64}}()
-        vols = []
-        volsQFiveSpot = []
-        test_functions = [linear_case, quadratic_case, QFiveSpot_case]
-        function add_to_solver(solver :: TPFASolver.Solver, i :: Int64, j :: Int64, res :: Dict)
-            name = solver.name
-            if haskey(res, name)
-                res[name][i, j] += TO.totallocated(solver.bench_info) / 1e6
-            else
-                res[name] = zeros(Float64, n_tests, n_reps)
-                res[name][i, j] += TO.totallocated(solver.bench_info) / 1e6 
-            end
-        end
-        general_test(meshfiles, test_functions, add_to_solver, n_tests, n_reps, mem, vols, false, "MEM", meshfiles_QFiveSpot, volsQFiveSpot)
-        Helpers.verbose("Done with memory tests", "OUT")
-        Helpers.verbose("=", "OUT")
-        for (name, matrix) in mem
-            println("For $(name):")
-            display(matrix)
-            println()
-        end
-        py"plot_memory"(mem, vols, volsQFiveSpot)
-    end
-        
-    n_tests, n_reps = 14, 1
-    run_accuracy(meshfiles, n_tests, n_reps)
-
-    n_tests, n_reps = 14, 10
-    #run_times(meshfiles,n_tests, n_reps)
+function create_qfive_spot_ref()
+    py"""
     
-    n_tests, n_reps = 14, 10
-    #run_memory(meshfiles, n_tests, n_reps)
+    import numpy as np  
+    import numpy as np
+    import os
+    import sys
+    from scipy.io import savemat
+    def create_python_ref(x, y, z, p):
+        d = {
+            "x" : x,
+            "y" : y,
+            "z" : z,
+            "p" : p
+        }
+        
+        np.save("./vtks/qfive_spot_ref.npy", d)
+        
 
-end
-
-function create_QFiveSpot_ref()
+    def create_matlab_ref(x, y, z, p):
+        savemat("./vtks/qfive_spot_ref.mat", {"x": x, "y": y, "z": z, "p": p})
+        
+    """
     meshfile = "./mesh/box_9.msh"
     mesh :: Union{MeshHandler.Mesh, Nothing} = nothing
     if isfile("./mesh/mesh9.jld2")
@@ -388,24 +270,122 @@ function create_QFiveSpot_ref()
         mesh = MeshHandler.Mesh(meshfile)
         JLD2.jldsave("./mesh/mesh9.jld2"; mesh)
     end
-    solver = QFiveSpot_case(mesh, (6, 4, 1), true)
+    solver = qfive_spot(mesh, (6, 4, 1), true)
     xv, yv, zv =    Helpers.get_column.(mesh.volumes_centers, 1), 
                     Helpers.get_column.(mesh.volumes_centers, 2), 
                     Helpers.get_column.(mesh.volumes_centers, 3)
 
-    DF.writedlm("./vtks/QFiveSpotRef.txt", [xv yv zv solver.p_TPFA], ',')
+    DF.writedlm("./vtks/qfive_spot_ref.txt", [xv yv zv solver.p_TPFA], ',')
+    py"create_python_ref"(xv, yv, zv, solver.p_TPFA)
+    py"create_matlab_ref"(xv, yv, zz, solver.p_TPFA)
 end
-function main()
+function run_tests(meshfiles :: Array, meshfiles_qfive_spot :: Array, nrepeats :: Int64 = 1, try_precompile :: Bool = true, test_case :: Int64 = 1)
+    if try_precompile
+        meshf = "./mesh/cube_hex.msh"
+        meshqfive = "./mesh/box_2.msh"
+        Helpers.verbose("Precompiling with two dummy cases...", "INFO")
+        linear_case(MeshHandler.Mesh(meshf))
+        qfive_spot(MeshHandler.Mesh(meshqfive), (6, 4, 1))
+    end
+    p1 = Helpers.Problem("linear_case", linear_case, meshfiles)
+    p2 = Helpers.Problem("quadratic_case", quadratic_case, meshfiles)
+    p3 = Helpers.Problem("extra_case1", extra_case1, meshfiles)
+    p4 = Helpers.Problem("extra_case2", extra_case2, meshfiles)
+    p5 = Helpers.Problem("qfive_spot", qfive_spot, meshfiles_qfive_spot)
+    problems = [p1, p2, p3, p4, p5]
+    problems = [problems[test_case]]
+    Helpers.verbose("Loading meshes and mesh_params", "OUT")    
+    meshes_dict = Dict()
+    for problem in problems
+        for meshfile in problem.meshfiles
+            if haskey(meshes_dict, meshfile)
+                continue
+            end
+            Helpers.verbose("Loading $(meshfile)...", "INFO")
+            mesh = MeshHandler.Mesh(meshfile)
+            meshes_dict[meshfile] = mesh
+            Helpers.verbose("Finished loading $(meshfile) : $(mesh.nvols) volumes", "INFO")
+        end
+    end
     
-    #create_QFiveSpot_ref()
-    meshfiles_QFiveSpot = [("./mesh/box_$(i).msh", (6, 4, 1)) for i in 2:8]
-    meshfiles_QFiveSpot = []
-    meshfiles           = [("./mesh/box_$(i)acc.msh", (1, 1, 1)) for i in 0:6]
-    run_tests(meshfiles, meshfiles_QFiveSpot, true)
-    #solver = extra_case1(MeshHandler.Mesh(meshfiles[2][1]), true)
-    #show(solver.bench_info)
-    #QFiveSpot_case(MeshHandler.Mesh(meshfiles[7][1]), meshfiles[7][2], true)
-    
+    verbose = false
+    Helpers.verbose("Starting tests", "OUT")
+    summaryIO = open("saida.txt", "w")
+    for i in 1:length(problems)
+        k = 1
+        solver_name = ""
+        for meshfile in problems[i].meshfiles
+            mesh = meshes_dict[meshfile]
+            for j in 1:nrepeats
+                memuse = Helpers.memuse()
+                Helpers.verbose("Starting [$(j)/$(nrepeats)] rep of [$(k)/$(length(problems[i].meshfiles))] in $(problems[i].name)", "OUT")
+                Helpers.verbose("Memory use: $(memuse)", "INFO")
+                if memuse > 1.0e4
+                    counter = 0 
+                    Helpers.verbose("Memory use too high! -> $(Helpers.memuse())", "INFO")
+                    while Helpers.memuse() > 1.0e4
+                        #GC.gc()
+                        counter += 1
+                        if counter == 3
+                            break
+                        end
+                    end
+                end
+                solver :: TPFASolver.Solver = TPFASolver.Solver()
+                if problems[i].name != "qfive_spot"
+                    solver = problems[i].handle(mesh, verbose)
+                else
+                    solver = problems[i].handle(mesh, (6, 4, 1), verbose)
+                end
+                solver_name = string(solver.name)
+                Helpers.verbose("Finished [$(j)/$(nrepeats)] reps of [$(k)/$(length(problems[i].meshfiles))] in $(solver.name)!", "INFO")
+                Helpers.add_to_problem!(problems[i], k, j, solver.mesh.nvols, solver.error, solver.times, solver.memory)
+            end
+            k += 1
+            
+        end
+        pr          = problems[i]
+        name        = solver_name
+        meshfiles   = pr.meshfiles
+        nvols       = pr.nvols_arr
+        error       = pr.avg_error_arr
+        times       = pr.avg_time_arr
+        memory      = pr.avg_memory_arr
+
+        d = Dict("name"         => name,
+                 "meshfiles"    => meshfiles,
+                 "nvols"        => nvols,
+                 "error"        => error,
+                 "times"        => times,
+                 "memory"       => memory)
+
+        JLD2.jldsave("./results/$(pr.name).jld2"; d)
+    end
+
 end
 
-main()
+
+function main()
+    
+    #create_qfive_spot_ref()
+    test_case = 0
+    for X in ARGS
+        test_case = parse(Int64, X)
+    end
+    meshfiles_qfive_spot = ["./mesh/box_$(i).msh" for i in 2:7]
+    meshfiles           = ["./mesh/box_$(i)acc.msh" for i in 0:14]
+    nrepeats = 5
+    #run_tests(meshfiles, meshfiles_qfive_spot, nrepeats, true, test_case)
+    case1 = JLD2.jldopen("./results/linear_case.jld2", "r")["d"]
+    case2 = JLD2.jldopen("./results/quadratic_case.jld2", "r")["d"]
+    case3 = JLD2.jldopen("./results/extra_case1.jld2", "r")["d"]
+    case4 = JLD2.jldopen("./results/extra_case2.jld2", "r")["d"]
+    case5 = JLD2.jldopen("./results/qfive_spot.jld2", "r")["d"]
+    cases = [case1, case2, case4, case5]
+    py"plot_times"(cases)
+    py"plot_memory"(cases)
+    py"plot_accurracy"(cases)
+end
+if !isinteractive()
+    main()
+end

@@ -7,7 +7,7 @@ def plot_accurracy(cases):
     n = int(np.ceil(len(cases) / 2))
     m = int(np.ceil(len(cases) / n))
     fig, ax = plt.subplots(n, m, figsize = (11, 6))
-    fig.suptitle("Comparação com Soluções Analíticas - Julia")
+    fig.suptitle("Comparação com Soluções Analíticas - Python")
     c = ["black", "blue", "green", "red", "grey"]
     qfile = csv.writer(open("./tests/q.csv", "w"))
     for i, case in enumerate(cases):
@@ -22,8 +22,6 @@ def plot_accurracy(cases):
             for j in error:
                 print("{:0.3e}".format(j), end=" ")
             print()
-
-
         if i == 0:
             first_row = ["Nome / Número de Volumes"]
             first_row.extend(nvols[1:])
@@ -57,7 +55,7 @@ def plot_times(cases):
     n = 2
     m = 2
     fig, ax = plt.subplots(2, 2, figsize = (11, 8))
-    fig.suptitle("Comparação de Tempo de Execução - Julia")
+    fig.suptitle("Comparação de Tempo de Execução - Python")
     c = ["black", "blue", "green", "red", "grey"]
     markers = ["p", "s", "o", "v", "D"]   
     def prepare_times(case):
@@ -92,7 +90,8 @@ def plot_times(cases):
         times = case["times"].T
         if case["name"] == "1/4 de Five-Spot":
             print("Times: ")
-            for j in times[2]:
+            print(list(case["nvols"]))
+            for j in times[new_keys_idx[2]]:
                 print("{:0.3e}".format(j), end=" ")
             print()
         for j, key in enumerate(new_keys):
@@ -124,7 +123,7 @@ def plot_times(cases):
 
 def plot_memory(cases):
     fig, ax = plt.subplots(1, 1, figsize = (11, 6))
-    fig.suptitle("Comparação de Memória Utilizada - Julia")
+    fig.suptitle("Comparação de Memória Utilizada - Python")
     c = ["black", "blue", "green", "red", "grey"]
     markers = ["p", "s", "o", "v", "D"]
     for i, case in enumerate(cases):
@@ -133,9 +132,9 @@ def plot_memory(cases):
         if case["name"] == "1/4 de Five-Spot":
             print("Memory: ")
             for j in memory:
-                print("{:0.3e}".format(j), end=" ")
+                print("{:0.3e}".format(j / 1e6), end=" ")
             print()
-        ax.plot(nvols, memory, label = case["name"], color = c[i % len(c)], marker = markers[i % len(markers)])
+        ax.plot(nvols, memory / 1e6, label = case["name"], color = c[i % len(c)], marker = markers[i % len(markers)])
         
     ax.grid()
     ax.legend(loc = "upper left")

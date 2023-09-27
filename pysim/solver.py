@@ -6,7 +6,8 @@ import sys
 import time
 
 import helpers
-
+import pypardiso
+from slugify import slugify
 
 counter = 0
 # Subindo o caminho para o diretório pai, para importar o módulo
@@ -15,9 +16,8 @@ sys.path.append('../')
 from preprocessor.meshHandle.finescaleMesh import FineScaleMesh                     # type: ignore 
 from scipy.sparse import csr_matrix
 from scipy.sparse.linalg import spsolve,cg
-from pypardiso import spsolve as pypardiso_spsolve
 from numba import njit
-
+from objsize import get_deep_size
 class TPFAsolver:
     def __init__(self, verbose = True, check : bool = True, name: str = "MESH", fast_solver : bool = True) -> None:
 
@@ -31,6 +31,7 @@ class TPFAsolver:
         self.verbose        = verbose                                               # Flag para verbose mode    (bool)
         self.check          = check                                                 # Flag para check mode      (bool)
         self.fast_solver    = fast_solver                                           # Flag para fast solver     (bool)
+        self.iterative      = False                                                 # Flag para solver iterativo(bool)
         np.set_printoptions(precision = 4)
         global counter
         if name == "MESH":
@@ -41,6 +42,7 @@ class TPFAsolver:
 
         # Utilidades-----------------------------------------------------------------------------------------------#
         self.times                  = {}                                            # Dicionário para os tempos (dict)
+        self.memory                 = None                                          # Tamanho (bytes) do solver (int)
         self.mesh                   = None                                          # Malha                     (FineScaleMesh)                           
         self.dim                    = None                                          # Dimensão da malha         (int)
 
@@ -85,7 +87,9 @@ class TPFAsolver:
         self.faces_trans            = None                                          # Array {nfaces, 3}
                                                                                     # com a transmissibilidade
                                                                                     # das faces internas.       (np.ndarray)
-
+        self.row_index              = None                                          # Índice das linhas da matriz esparsa
+        self.col_index              = None                                          # Índice das colunas da matriz esparsa
+        self.data                   = None                                          # Dados da matriz esparsa   (np.ndarray)
         self.At_TPFA                = None                                          # Matriz esparsa
                                                                                     # de transmissibilidade
                                                                                     # das faces internas.       (csr_matrix)
@@ -286,6 +290,7 @@ class TPFAsolver:
         }
         if self.verbose:
             self.__verbose(full_step_name)
+        self.memory = get_deep_size(self)
         return results
 
     def pre_process(self, meshfile: str = None, mesh_params : tuple = None, mesh : FineScaleMesh = None, dim : int = 3) -> tuple:
@@ -395,7 +400,7 @@ class TPFAsolver:
 
         meshset = self.mesh.core.mb.create_meshset()
         self.mesh.core.mb.add_entities(meshset, self.mesh.core.all_volumes)
-        vtk_filename = "mesh_{}.vtk".format(self.name)
+        vtk_filename = "mesh_{}.vtk".format(slugify(self.name))
         write_filename = os.path.join("vtks", vtk_filename)
         self.mesh.core.mb.write_file(write_filename, [meshset])
         return vtk_filename
@@ -607,23 +612,26 @@ class TPFAsolver:
         row_index_p = self.vols_pairs[:, 0]
         col_index_p = self.vols_pairs[:, 1]
         
-        row_index   = np.hstack((row_index_p, col_index_p))
-        col_index   = np.hstack((col_index_p, row_index_p))
-        data        = np.hstack((-self.faces_trans, -self.faces_trans))
-
-        self.At_TPFA = csr_matrix((data, (row_index, col_index)), 
-                                   shape=(self.nvols, self.nvols))
-        
+        diags = np.arange(self.nvols)
+        self.row_index   = np.hstack((row_index_p, col_index_p, diags))
+        self.col_index   = np.hstack((col_index_p, row_index_p, diags))
+        self.data        = np.hstack((-self.faces_trans, -self.faces_trans, np.zeros_like(diags)))
+        lines_sum        = np.zeros(shape = (self.nvols))
+        np.add.at(lines_sum, self.row_index, self.data)
+        diag_index       = np.where(self.row_index == self.col_index)[0]
+        diag_vals        = self.row_index[diag_index]
+        self.data[diag_index] = -lines_sum[diag_vals]
+        if self.check:
+            new_lines_sum = np.zeros(shape = (self.nvols))
+            np.add.at(new_lines_sum, self.row_index, self.data)
+            assert np.allclose(new_lines_sum, np.zeros(shape = (self.nvols))), "Sistema inconsistente"
         
         xv, yv, zv = self.volumes_center[:, 0], self.volumes_center[:, 1], self.volumes_center[:, 2]
         
         self.bt_TPFA = q(xv, yv, zv, self.permeability) * self.volumes              # Calcula o vetor b
 
-        self.At_TPFA = self.At_TPFA.tolil()                                         # Converte para lil para facilitar a montagem da matriz A
-        self.At_TPFA.setdiag(-self.At_TPFA.sum(axis=1))                             # Soma as contribuições de cada volume na diagonal
-        self.At_TPFA = self.At_TPFA.tocsr()
-        if self.check:
-            assert np.allclose(self.At_TPFA.sum(axis = 1), np.zeros(shape = (self.nvols, 1))), "Matriz A não foi montada corretamente"
+        
+        
 
     def __set_dirichlet_boundary_conditions(self, bc : callable) -> None:
         """
@@ -700,13 +708,10 @@ class TPFAsolver:
             self.bt_TPFA[d_volumes] = d_values
             
             
-            for d_volume in d_volumes:
-                self.At_TPFA.data[self.At_TPFA.indptr[d_volume] : self.At_TPFA.indptr[d_volume + 1]] = 0.
-            self.At_TPFA.eliminate_zeros()
-            self.At_TPFA = self.At_TPFA.tolil()
-            # self.At_TPFA[d_volumes] = 0.                                          # Equivalent but slower
-            self.At_TPFA[d_volumes, d_volumes] = 1.
-            self.At_TPFA = self.At_TPFA.tocsr()
+            d_index = np.where(np.isin(self.row_index, d_volumes))
+            self.data[d_index] = 0.
+            diag_index = np.where(np.logical_and(self.row_index == self.col_index, np.isin(self.row_index, d_volumes)))[0]
+            self.data[diag_index] = 1.
 
             self.d_faces, self.d_values, self.d_volumes = d_faces, d_values, d_volumes
             self.Ad_TPFA = None
@@ -775,6 +780,8 @@ class TPFAsolver:
         """
         Resolve o sistema TPFA
         """
+        self.At_TPFA = csr_matrix((self.data, (self.row_index, self.col_index)), 
+                                   shape=(self.nvols, self.nvols))
         A = self.At_TPFA
         b = self.bt_TPFA
         if self.Ad_TPFA is not None:
@@ -783,63 +790,27 @@ class TPFAsolver:
         if self.bn_TPFA is not None:
             b += self.bn_TPFA
         A.eliminate_zeros()
-        if self.fast_solver:
-            self.p_TPFA = pypardiso_spsolve(A, b)
+        if self.iterative:
+            #self.p_TPFA, info = cg(A, b, maxiter = 10000, tol = 1e-10)
+            #msg = "Success!" if info == 0 else "Convengence not achieved!" if info > 0 else "Illegal input or breakdown!" 
+            #helpers.verbose(msg, "INFO")
+            pass
+        elif self.fast_solver:
+            self.p_TPFA = pypardiso.spsolve(A, b)
         else:
             self.p_TPFA = spsolve(A, b) 
+            pass
         if self.check:
             assert np.allclose(A.dot(self.p_TPFA), b), "Solução do sistema TPFA não satisfaz a equação"
-            assert self.__check_conservative(), "Solução do sistema TPFA não conserva o fluxo" 
         #self.p_TPFA /= self.volumes
-        
-    def __check_conservative(self) -> bool:
-        """
-        Verifica se a solução do sistema TPFA satisfaz a conservação do fluxo
-        """
-        return True
+   
     
-    def __do_integral_over_volumes(self, f: callable, volumes_index: np.array) -> np.array:
-        """
-        Calcula a integral de f sobre os volumes especificados
-        """
-        # ==== ERROR HANDLING =======================================================================================#
-        if not callable(f):
-            raise TypeError("\t f must be a callable function!")
-        # ===========================================================================================================#
-        nodes   = self.volumes_connectivities[volumes_index]
-        coords  = self.nodes_coords[nodes.flatten()].reshape(nodes.shape + (3,))
-        x, y, z = coords[:, :, 0], coords[:, :, 1], coords[:, :, 2]
-        liminfx, limsupx = np.min(x, axis=1), np.max(x, axis=1)
-        liminfy, limsupy = np.min(y, axis=1), np.max(y, axis=1)
-        liminfz, limsupz = np.min(z, axis=1), np.max(z, axis=1)
-        limsx = np.array([liminfx, limsupx]).T
-        limsy = np.array([liminfy, limsupy]).T
-        limsz = np.array([liminfz, limsupz]).T
-        lims  = np.hstack((limsx, limsy, limsz)).reshape(len(volumes_index), 3, 2)
-        return self.__integrate(f, lims)
-    
-    def __integrate(self, f: callable, lims: np.array) -> np.array:
-        """
-        Calcula a integral tripla de f(x,y,z) sobre os limites especificados
-        """
-        from scipy.integrate import tplquad
-        def integrand(z, y, x):
-            return f(x, y, z)
-        
-        
-        def integrate_over_volume(lims):
-            result = np.empty(len(lims))
-            for i in range(len(lims)):
-                result[i] = tplquad(integrand, lims[i, 0, 0], lims[i, 0, 1],
-                                    lambda x: lims[i, 1, 0], lambda x: lims[i, 1, 1],
-                                    lambda x, y: lims[i, 2, 0], lambda x, y: lims[i, 2, 1])[0]
-            return result
-
-        return integrate_over_volume(lims)
+   
     
 def main():
     directory = "mesh"
     # Open the mesh directory and run the solver for each mesh file
+    
     solver = TPFAsolver(verbose=True)
     for meshfile in os.listdir(directory):
         mesh_name = meshfile.split(".")[0]
